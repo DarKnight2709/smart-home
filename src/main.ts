@@ -3,6 +3,8 @@ import { VersioningType } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ConfigService } from './shared/services/config.service';
+import { configSwagger } from './configs/swagger.config';
+import { Logger } from '@nestjs/common';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -23,12 +25,23 @@ async function bootstrap() {
     defaultVersion: String(API_DEFAULT_VERSION),
   });
 
+  // Setup Swagger
+  const { swaggerEnabled, swaggerUrl } = configSwagger(app, configService);
+
+
+
+
+
   // Start server
   try {
     await app.listen(PORT);
-    console.log(`Server is running on ${API_URL}`, 'Bootstrap');
+    Logger.log(`Server is running on ${API_URL}`, 'Bootstrap');
+
+    if(swaggerEnabled) {
+      Logger.log(`Swager is running on ${swaggerUrl}`, 'Bootstrap')
+    }
   } catch (error) {
-    console.error(error, 'Bootstrap');
+    Logger.error(error, 'Bootstrap');
     process.exit(1);
   }
 }

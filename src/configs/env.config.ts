@@ -62,6 +62,21 @@ export class EnvironmentValidation {
 
   @IsString()
   DB_NAME: string;
+
+  // Swagger
+  @IsString()
+  SWAGGER_TITLE: string;
+
+  @IsString()
+  SWAGGER_DESCRIPTION: string
+
+  @IsString()
+  SWAGGER_VERSION: string
+
+  @IsString()
+  @Transform(({ value }) => value.trim().replace(/^\/+|\/+$/g, '') || 'docs')
+  SWAGGER_UI_PATH: string;
+
 }
 
 
