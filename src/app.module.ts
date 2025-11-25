@@ -1,15 +1,15 @@
 import { MiddlewareConsumer, Module, NestModule} from '@nestjs/common';
 import { AppController } from './app.controller';
-import { AppService } from './app.service';
 import { SharedModule } from './shared/shared.module';
 import { DatabaseModule } from './database/database.module';
 import { UserModule } from './modules/user/user.module';
 import helmet from 'helmet';
 import compression from "compression";
 import { LoggerMiddleware } from './shared/middlewares/logger.middleware';
-import { AuthController } from './modules/auth/auth.controller';
-import { AuthService } from './modules/auth/auth.service';
 import { AuthModule } from './modules/auth/auth.module';
+import { APP_GUARD } from '@nestjs/core';
+import { JwtGuard } from './shared/guards/jwt.guard';
+import { PermissionGuard } from './shared/guards/permission.guard';
 
 @Module({
   imports: [
@@ -18,8 +18,17 @@ import { AuthModule } from './modules/auth/auth.module';
    UserModule,
    AuthModule
   ],
-  controllers: [AppController, AuthController],
-  providers: [AppService, AuthService],
+  controllers: [AppController],
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: JwtGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: PermissionGuard,
+    },
+  ],
 })
 export class AppModule implements NestModule{
   configure(consumer: MiddlewareConsumer) {

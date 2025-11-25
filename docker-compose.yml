@@ -11,7 +11,7 @@ services:
     environment:
       POSTGRES_USER: postgredb
       POSTGRES_PASSWORD: postgredb
-      POSTGRES_DB: face-recognition
+      POSTGRES_DB: smart-home
     # mở port 5432 ra ngoài để có thể connect từ máy host
     ports:
       - '5435:5432'
