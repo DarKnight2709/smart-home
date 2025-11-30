@@ -77,8 +77,8 @@ export class PermissionGuard implements CanActivate {
 
     const hasPermission = permissions.some(
       (permission) =>
-        permission.method === request.method &&
-        permission.path === pathSerialized,
+        permission?.method === request.method &&
+        permission?.path === pathSerialized,
     );
 
     if (!hasPermission) {

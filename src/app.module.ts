@@ -1,4 +1,4 @@
-import { MiddlewareConsumer, Module, NestModule} from '@nestjs/common';
+import { ClassSerializerInterceptor, MiddlewareConsumer, Module, NestModule} from '@nestjs/common';
 import { SharedModule } from './shared/shared.module';
 import { DatabaseModule } from './database/database.module';
 import { UserModule } from './modules/user/user.module';
@@ -6,19 +6,27 @@ import helmet from 'helmet';
 import compression from "compression";
 import { LoggerMiddleware } from './shared/middlewares/logger.middleware';
 import { AuthModule } from './modules/auth/auth.module';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { JwtGuard } from './shared/guards/jwt.guard';
 import { PermissionGuard } from './shared/guards/permission.guard';
-
+import { AuditLogModule } from './modules/audit-log/audit-log.module';
+import { AuditContextInterceptor } from 'src/modules/audit-log/audit-context.interceptor';
 @Module({
   imports: [
    SharedModule,
    DatabaseModule,
    UserModule,
-   AuthModule
+   AuthModule,
+   AuditLogModule
   ],
   controllers: [],
   providers: [
+
+    // dùng để serialize response data (loại bỏ các field không cần thiết - các field có decorator @Exclude()) 
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: ClassSerializerInterceptor,
+    },
     {
       provide: APP_GUARD,
       useClass: JwtGuard,
@@ -27,6 +35,10 @@ import { PermissionGuard } from './shared/guards/permission.guard';
       provide: APP_GUARD,
       useClass: PermissionGuard,
     },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: AuditContextInterceptor,
+    }
   ],
 })
 export class AppModule implements NestModule{
