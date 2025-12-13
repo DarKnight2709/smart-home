@@ -64,39 +64,28 @@ export class JwtGuard implements CanActivate {
         algorithms: ['RS256'],
       }) as JwtPayload;
 
-      const user = await this.dataSource.getRepository(UserEntity).findOne({
-        where: { id: payload.sub },
-        select: {
-          id: true,
-          fullName: true,
-          username: true,
-          roles: {
-            id: true,
-            name: true,
-            isActive: true,
-            isSystemRole: true,
-            permissions: {
-              id: true,
-              name: true,
-              path: true,
-              method: true,
-              module: true,
-            },
-          },
-        },
-        relations: {
-          roles: {
-            permissions: true,
-          },
-        },
-        // dùng cache:
-        // đầu tiên query -> lấy dữ liệu từ DB và lưu vào cache
-        // lần sau -> lấy trực tiếp từ cache, không truy vấn DB nữa
-        cache: {
-          id: `user:${payload.sub}`,
-          milliseconds: 3600000,
-        },
-      });
+      // Dùng query builder để chắc chắn join đầy đủ roles + permissions
+      const user = await this.dataSource
+        .getRepository(UserEntity)
+        .createQueryBuilder('user')
+        .leftJoinAndSelect('user.roles', 'role')
+        .leftJoinAndSelect('role.permissions', 'permission')
+        .where('user.id = :id', { id: payload.sub })
+        .select([
+          'user.id',
+          'user.fullName',
+          'user.username',
+          'role.id',
+          'role.name',
+          'role.isActive',
+          'role.isSystemRole',
+          'permission.id',
+          'permission.name',
+          'permission.path',
+          'permission.method',
+          'permission.module',
+        ])
+        .getOne();
 
       if (!user) {
         throw new UnauthorizedException('Vui lòng đăng nhập để tiếp tục');

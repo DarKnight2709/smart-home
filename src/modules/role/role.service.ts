@@ -1,31 +1,30 @@
 import {
   ConflictException,
   Injectable,
+  InternalServerErrorException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { RoleEntity } from 'src/database/entities/role.entity';
 import { ILike, QueryFailedError, Repository } from 'typeorm';
 import { CreateRoleDto, GetRolesQueryDto, UpdateRoleDto } from './role.dto';
+import { SystemRole } from 'src/shared/enums/system-role';
+import { PermissionEntity } from 'src/database/entities/permission.entity';
 
 @Injectable()
 export class RoleService {
+  private readonly logger = new Logger(RoleService.name);
   constructor(
     @InjectRepository(RoleEntity)
     private readonly rolesRepository: Repository<RoleEntity>,
+    @InjectRepository(PermissionEntity)
+    private readonly permissionRepository: Repository<PermissionEntity>
   ) {}
 
   // Lấy danh sách vai trò
-  async findAll(
-    queryDto: GetRolesQueryDto
-  ) {
-    const {
-      page = 1,
-      limit = 10,
-      search,
-      isSystemRole,
-      isActive,
-    } = queryDto;
+  async findAll(queryDto: GetRolesQueryDto) {
+    const { page = 1, limit = 10, search, isSystemRole, isActive } = queryDto;
     const [data, total] = await this.rolesRepository.findAndCount({
       where: {
         name: search ? ILike(`%${search}%`) : undefined,
@@ -107,5 +106,51 @@ export class RoleService {
     const role = await this.findOne(id);
     await this.rolesRepository.remove(role);
     return { deleted: true };
+  }
+
+  async syncSystemRole() {
+    try {
+      let systemRole = await this.rolesRepository.findOne({
+        where: { name: SystemRole.ADMIN, isSystemRole: true },
+      });
+
+      let subAdminRole = await this.rolesRepository.findOne({
+        where: { name: SystemRole.SUB_ADMIN, isSystemRole: true },
+      });
+
+      const permissions = await this.permissionRepository.find();
+
+      if (systemRole) {
+        systemRole.isActive = true;
+        systemRole.description = 'Admin role';
+        systemRole.permissions = permissions;
+      } else {
+        systemRole = this.rolesRepository.create({
+          name: SystemRole.ADMIN,
+          description: 'Admin role',
+          isActive: true,
+          isSystemRole: true,
+          permissions,
+        });
+      }
+
+      if (!subAdminRole) {
+        subAdminRole = this.rolesRepository.create({
+          name: SystemRole.SUB_ADMIN,
+          description: 'Sub admin role',
+          isActive: true,
+          isSystemRole: true,
+          permissions: [],
+        });
+        await this.rolesRepository.save(subAdminRole);
+      }
+
+      await this.rolesRepository.save(systemRole);
+
+      return true;
+    } catch (error) {
+      this.logger.error(error);
+      throw new InternalServerErrorException('Lỗi khi tạo vai trò hệ thống');
+    }
   }
 }

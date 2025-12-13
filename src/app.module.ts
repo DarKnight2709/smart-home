@@ -12,6 +12,7 @@ import { JwtGuard } from './shared/guards/jwt.guard';
 import { PermissionGuard } from './shared/guards/permission.guard';
 import { AuditLogModule } from './modules/audit-log/audit-log.module';
 import { AuditContextInterceptor } from 'src/modules/audit-log/audit-context.interceptor';
+import { PermissionModule } from './modules/permission/permission.module';
 @Module({
   imports: [
    SharedModule,
@@ -19,7 +20,8 @@ import { AuditContextInterceptor } from 'src/modules/audit-log/audit-context.int
    UserModule,
    AuthModule,
    AuditLogModule,
-   RoleModule
+   RoleModule,
+   PermissionModule
   ],
   controllers: [],
   providers: [
