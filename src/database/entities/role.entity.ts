@@ -47,7 +47,7 @@ export class RoleEntity extends AuditableEntity {
 
   // Many to many to Permission
   @ManyToMany(() => PermissionEntity, (permission) => permission.roles, {
-    cascade: true,
+    cascade: false,
   })
   @JoinTable({
     name: "roles_permissions",

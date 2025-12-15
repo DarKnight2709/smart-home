@@ -1,5 +1,7 @@
 import {
+  BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -7,7 +9,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { RoleEntity } from 'src/database/entities/role.entity';
-import { ILike, QueryFailedError, Repository } from 'typeorm';
+import { ILike, In, QueryFailedError, Repository } from 'typeorm';
 import { CreateRoleDto, GetRolesQueryDto, UpdateRoleDto } from './role.dto';
 import { SystemRole } from 'src/shared/enums/system-role';
 import { PermissionEntity } from 'src/database/entities/permission.entity';
@@ -19,7 +21,7 @@ export class RoleService {
     @InjectRepository(RoleEntity)
     private readonly rolesRepository: Repository<RoleEntity>,
     @InjectRepository(PermissionEntity)
-    private readonly permissionRepository: Repository<PermissionEntity>
+    private readonly permissionRepository: Repository<PermissionEntity>,
   ) {}
 
   // Lấy danh sách vai trò
@@ -51,61 +53,110 @@ export class RoleService {
   }
 
   async findOne(id: string) {
-    const role = await this.rolesRepository.findOne({
-      where: { id },
-    });
-    if (!role) {
-      throw new NotFoundException('Không tìm thấy vai trò');
+    try {
+      const role = await this.rolesRepository.findOne({
+        where: { id },
+        relations: {
+          permissions: true,
+        },
+      });
+      if (!role) {
+        throw new NotFoundException('Không tìm thấy vai trò');
+      }
+      return role;
+    } catch (error) {
+      console.log(error);
+      if (!(error instanceof InternalServerErrorException)) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Lỗi khi xóa vai trò');
     }
-    return role;
   }
 
   // Tạo mới vai trò
   async create(payload: CreateRoleDto) {
     try {
+      const existed = await this.rolesRepository.findOne({
+        where: { name: payload.name },
+      });
+  
+      if (existed) {
+        throw new ConflictException('Tên vai trò đã tồn tại');
+      }
+  
+      let permissions: PermissionEntity[] = [];
+      if (payload.permissionIds?.length) {
+        permissions = await this.permissionRepository.findBy({
+          id: In(payload.permissionIds),
+        });
+  
+        if (permissions.length !== payload.permissionIds.length) {
+          throw new BadRequestException('Có permission không tồn tại');
+        }
+      }
+  
       const role = this.rolesRepository.create({
         ...payload,
         description: payload.description ?? '',
-        isActive: payload.isActive ?? true,
-        isSystemRole: payload.isSystemRole ?? false,
+        isActive: true,
+        isSystemRole: false,
+        permissions,
       });
-
-      await this.rolesRepository.save(role);
-      return role;
+  
+      return await this.rolesRepository.save(role);
+  
     } catch (error) {
-      if (error instanceof QueryFailedError) {
-        throw new ConflictException('Tên vai trò đã tồn tại');
-      }
+      console.log(error);
       throw error;
     }
   }
 
   // Cập nhật vai trò
   async update(id: string, payload: UpdateRoleDto) {
-    const role = await this.findOne(id);
-
-    Object.assign(role, {
-      ...payload,
-      description: payload.description ?? role.description,
-      isActive: payload.isActive ?? role.isActive,
-      isSystemRole: payload.isSystemRole ?? role.isSystemRole,
-    });
-
     try {
+      const role = await this.findOne(id);
+      if (role.isSystemRole) {
+        throw new ForbiddenException('Bạn không có quyền sửa quyền này.');
+      }
+      Object.assign(role, {
+        name: payload.name ?? role.name,
+        description: payload.description ?? role.description,
+      });
+
+      if (payload.permissionIds) {
+        const permissions = await this.permissionRepository.findBy({
+          id: In(payload.permissionIds),
+        })
+        
+        if(permissions.length !== payload.permissionIds.length) {
+          throw new BadRequestException("Có permission không tồn tại")
+        }
+        role.permissions = permissions;
+      }
       return await this.rolesRepository.save(role);
     } catch (error) {
-      if (error instanceof QueryFailedError) {
-        throw new ConflictException('Tên vai trò đã tồn tại');
-      }
+      console.log(error);
       throw error;
     }
   }
 
   // Xóa vai trò
   async remove(id: string) {
-    const role = await this.findOne(id);
-    await this.rolesRepository.remove(role);
-    return { deleted: true };
+    try {
+      // kiểm tra nếu là role hệ thống thì không cho xóa
+      const role = await this.findOne(id);
+      if (role.isSystemRole) {
+        throw new ForbiddenException('Bạn không có quyền xóa quyền này.');
+      }
+      await this.rolesRepository.remove(role);
+      return { deleted: true };
+    } catch (error) {
+      console.log(error);
+      if (!(error instanceof InternalServerErrorException)) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Lỗi khi xóa vai trò');
+    }
   }
 
   async syncSystemRole() {
@@ -116,9 +167,9 @@ export class RoleService {
           isSystemRole: true,
         },
       });
-  
+
       const permissions = await this.permissionRepository.find();
-  
+
       if (systemRole) {
         systemRole.isActive = true;
         systemRole.description = 'Admin role';
@@ -132,14 +183,13 @@ export class RoleService {
           permissions,
         });
       }
-  
+
       await this.rolesRepository.save(systemRole);
-  
+
       return true;
     } catch (error) {
       this.logger.error(error);
       throw new InternalServerErrorException('Lỗi khi tạo vai trò hệ thống');
     }
   }
-  
 }

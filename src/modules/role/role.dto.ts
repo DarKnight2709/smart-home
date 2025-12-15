@@ -1,6 +1,6 @@
-import { ApiProperty, PartialType } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
-import { IsBoolean, IsInt, IsNotEmpty, IsOptional, IsString, IsUUID, Max, Min } from 'class-validator';
+import { IsArray, IsBoolean, IsInt, IsNotEmpty, IsOptional, IsString, IsUUID, Max, Min } from 'class-validator';
 
 export class CreateRoleDto {
   @ApiProperty({
@@ -21,25 +21,51 @@ export class CreateRoleDto {
   description?: string;
 
   @ApiProperty({
-    description: 'Trạng thái hoạt động',
-    example: true,
+    description: "Danh sách ID quyền",
+    type: [String],
     required: false,
+    example: [
+      '3fa85f64-5717-4562-b3fc-2c963f66afa6'
+    ]
   })
   @IsOptional()
-  @IsBoolean()
-  isActive?: boolean;
-
-  @ApiProperty({
-    description: 'Đánh dấu vai trò hệ thống',
-    example: false,
-    required: false,
-  })
-  @IsOptional()
-  @IsBoolean()
-  isSystemRole?: boolean;
+  @IsArray()
+  @IsUUID('4', { each: true })  
+  permissionIds?: string[]
 }
 
-export class UpdateRoleDto extends PartialType(CreateRoleDto) {}
+export class UpdateRoleDto {
+
+  @ApiPropertyOptional({
+    description: 'Tên vai trò',
+    example: 'ADMIN',
+  })
+  @IsOptional()
+  @IsNotEmpty()
+  @IsString()
+  name?: string;
+
+  @ApiPropertyOptional({
+    description: 'Mô tả vai trò',
+    example: 'Quản trị hệ thống',
+  })
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @ApiPropertyOptional({
+    description: "Danh sách ID quyền",
+    type: [String],
+    example: [
+      '3fa85f64-5717-4562-b3fc-2c963f66afa6'
+    ]
+  })
+  @IsOptional()
+  @IsArray()
+  @IsUUID('4', { each: true })  
+  permissionIds?: string[];
+}
+
 
 
 export class GetRolesQueryDto {

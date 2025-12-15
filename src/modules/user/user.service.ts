@@ -122,6 +122,7 @@ export class UserService {
     }
 
     // Roles
+    // gán undefined thì nó sẽ lấy giá trị cũ hoặc null.
     const roles = payload.roleIds?.length
       ? await this.rolesRepository.findBy({ id: In(payload.roleIds) })
       : undefined;

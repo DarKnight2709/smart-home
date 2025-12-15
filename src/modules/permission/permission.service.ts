@@ -1,6 +1,7 @@
 import {
   ForbiddenException,
   Injectable,
+  InternalServerErrorException,
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -17,6 +18,25 @@ export class PermissionService {
     @InjectRepository(PermissionEntity)
     private readonly permissionRepository: Repository<PermissionEntity>,
   ) {}
+
+  async findAll() {
+    try {
+      const permissions = this.permissionRepository.find({
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          path: true,
+          method: true,
+          module: true,
+        }
+      })
+      return permissions;
+    } catch (error) {
+      console.log(error);
+      throw new InternalServerErrorException("Lỗi server")
+    }
+  }
 
   async syncPermissions(routes: IRouteInfo[]) {
     this.logger.log(`Starting sync ${routes.length} permissions...`);
