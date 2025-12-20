@@ -1,5 +1,4 @@
-import { Transform, plainToClass } from "class-transformer";
-
+import { Transform, plainToClass } from 'class-transformer';
 
 import {
   IsBoolean,
@@ -9,30 +8,27 @@ import {
   validateSync,
 } from 'class-validator';
 
-
 export const NodeEnv = {
   DEVELOPMENT: 'development',
   PRODUCTION: 'production',
   TEST: 'test',
-} as const; 
+} as const;
 
-export type NodeEnv = (typeof NodeEnv)[keyof typeof NodeEnv] // -> type NodeEnv = "development" | "production" | "test"
+export type NodeEnv = (typeof NodeEnv)[keyof typeof NodeEnv]; // -> type NodeEnv = "development" | "production" | "test"
 
 export class EnvironmentValidation {
-  // Application 
+  // Application
   @IsEnum(NodeEnv) // validation
   @Transform(({ value }) => value || NodeEnv.DEVELOPMENT) // this run before validation and modify the input
   NODE_ENV: NodeEnv = NodeEnv.DEVELOPMENT;
 
   @IsNumber()
-  @Transform(({ value }) => (value ? parseInt(value, 10): 4001))
+  @Transform(({ value }) => (value ? parseInt(value, 10) : 4001))
   PORT: number = 4001;
-
 
   @IsString()
   @Transform(({ value }) => value.trim().replace(/^\/+|\/+$/g, '') || 'api')
   API_PREFIX: string;
-
 
   @IsNumber()
   @Transform(({ value }) => (value ? parseInt(value, 10) : 1))
@@ -44,9 +40,7 @@ export class EnvironmentValidation {
   @IsString()
   CLIENT_URL: string;
 
-
-
-    // Database
+  // Database
   @IsString()
   DB_HOST: string;
 
@@ -68,15 +62,14 @@ export class EnvironmentValidation {
   SWAGGER_TITLE: string;
 
   @IsString()
-  SWAGGER_DESCRIPTION: string
+  SWAGGER_DESCRIPTION: string;
 
   @IsString()
-  SWAGGER_VERSION: string
+  SWAGGER_VERSION: string;
 
   @IsString()
   @Transform(({ value }) => value.trim().replace(/^\/+|\/+$/g, '') || 'docs')
   SWAGGER_UI_PATH: string;
-
 
   // RSA Key
   @IsString()
@@ -96,14 +89,24 @@ export class EnvironmentValidation {
 
   // JWT
   @IsNumber()
-  @Transform(({ value }) => (value ? parseInt(value, 10): 300))
+  @Transform(({ value }) => (value ? parseInt(value, 10) : 300))
   ACCESS_TOKEN_EXPIRES_IN: number;
-  
-  @IsNumber()
-  @Transform(({ value }) => (value ? parseInt(value, 10): 3600))
-  REFRESH_TOKEN_EXPIRES_IN: number;
-}
 
+  @IsNumber()
+  @Transform(({ value }) => (value ? parseInt(value, 10) : 3600))
+  REFRESH_TOKEN_EXPIRES_IN: number;
+
+  // MQTT
+  @IsString()
+  @Transform(({ value }) => value || 'mqtt://localhost:1883')
+  MQTT_BROKER_URL: string;
+
+  @IsString()
+  MQTT_USERNAME: string;
+
+  @IsString()
+  MQTT_PASSWORD: string;
+}
 
 export function validateConfig(config: Record<string, unknown>) {
   // tạo object theo class EnvironmentValidation
@@ -127,7 +130,6 @@ export function validateConfig(config: Record<string, unknown>) {
   }
 
   return validatedConfig;
-
 }
 
 export type EnvironmentVariables = EnvironmentValidation;
@@ -140,10 +142,10 @@ export type EnvironmentVariables = EnvironmentValidation;
 
 export default () => {
   try {
-    const env = validateConfig(process.env)
+    const env = validateConfig(process.env);
     return env;
   } catch (error) {
     console.log('Biến môi trường không hợp lệ: ', error);
-    throw new Error('Biến môi trường không hợp lệ')
+    throw new Error('Biến môi trường không hợp lệ');
   }
-}
+};

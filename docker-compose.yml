@@ -18,6 +18,16 @@ services:
     #  gắn một thư mục (volume) để lưu dữ liệu ra ngoài container -> khi container xóa thì dữ liệu vẫn còn
     volumes:
       - pgdata:/var/lib/postgresql/data
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    container_name: mosquitto
+    ports:
+      - "1883:1883"      # MQTT port (standard)
+    volumes:
+      - ./mosquitto/config:/mosquitto/config
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/log:/mosquitto/log
+    restart: unless-stopped
 
 volumes:
   pgdata:
