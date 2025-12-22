@@ -8,6 +8,11 @@ import * as mqtt from 'mqtt';
 import { ConfigService } from '../../shared/services/config.service';
 import { DeviceService } from '../device/device.service';
 import { DeviceStatus, DeviceType } from 'src/shared/enums/device.enum';
+import { SocketGateway } from '../socket/socket.gateway';
+import { RoomSensorSnapshotEntity } from 'src/database/entities/sensor-data.entity';
+import { Repository } from 'typeorm';
+import { InjectRepository } from '@nestjs/typeorm';
+import { getDeviceStatistics } from 'src/shared/utils/getDeviceStatistics';
 
 interface SensorData {
   value: number;
@@ -30,6 +35,9 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private configService: ConfigService,
     private deviceService: DeviceService,
+    private readonly socketGateway: SocketGateway,
+    @InjectRepository(RoomSensorSnapshotEntity)
+    private readonly roomSensorSnapshotRepo: Repository<RoomSensorSnapshotEntity>,
   ) {
     this.brokerUrl =
       this.configService.get('MQTT_BROKER_URL') ||
@@ -95,14 +103,25 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
   }
 
   private subscribeToTopics() {
-    // Subscribe to sensor data: devices/{deviceId}/sensor/{sensorType}
-    // this.client.subscribe('devices/+/sensor/+', { qos: 1 }, (err) => {
-    //   if (err) {
-    //     this.logger.error(`❌ Failed to subscribe to sensor topics: ${err.message}`);
-    //   } else {
-    //     this.logger.log('✅ Subscribed to sensor topics: devices/+/sensor/+');
-    //   }
-    // });
+    // Subscribe to sensor data: +/sensor/+
+    this.client.subscribe('+/sensor-device', { qos: 1 }, (err) => {
+      if (err) {
+        this.logger.error(
+          `❌ Failed to subscribe to sensor topics: ${err.message}`,
+        );
+      } else {
+        this.logger.log('✅ Subscribed to sensor topics: +/sensor/+');
+      }
+    });
+    this.client.subscribe('+/device-register', { qos: 1 }, (err) => {
+      if (err) {
+        this.logger.error(
+          `❌ Failed to subscribe to sensor topics: ${err.message}`,
+        );
+      } else {
+        this.logger.log('✅ Subscribed to sensor topics: +/sensor/+');
+      }
+    });
     // this.client.subscribe('room/living/status', { qos: 1 }, (err) => {
     //   if (err) {
     //     this.logger.error(`❌ Failed to subscribe to sensor topics: ${err.message}`);
@@ -111,11 +130,11 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
     //   }
     // });
 
-    // Subscribe to device status: devices/{deviceId}/status
-    this.client.subscribe('+/status/+', { qos: 1 }, (err) => {
+    // Subscribe to device status: +/status/+
+    this.client.subscribe('+/device-status/+', { qos: 1 }, (err) => {
       if (err) {
         this.logger.error(
-          `❌ Failed to subscribe to '+/status/+': ${err.message}`,
+          `❌ Failed to subscribe to '+/device-status/+': ${err.message}`,
         );
       } else {
         this.logger.log('✅ Subscribed to device status topics: +/status/+');
@@ -153,39 +172,38 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
   //   }
   // }
   private async handleMessage(topic: string, message: Buffer) {
-    const payload = message.toString().trim();
-    const [room, , device] = topic.split('/');
-
-    let state: string | undefined;
-
-    if (device === 'light') {
-      if (payload === 'ON') state = 'on';
-      if (payload === 'OFF') state = 'off';
-    }
-
-    if (device === 'door') {
-      if (payload === 'LOCKED') state = 'closed';
-      if (payload === 'UNLOCKED') state = 'open';
-    }
-
-    if (!state) {
-      // this.logger.warn(`⚠️ Ignored payload ${payload} on ${topic}`);
+    const parts = topic.split('/');
+    if (parts.length < 2) {
       return;
     }
+    let room = parts[0];
+    let category = parts[1];
+    let device = '';
+    if (parts.length === 3) {
+      device = parts[2];
+    }
+    console.log(topic);
+    console.log(message.toString());
 
-    // update RAM
-    if (device === 'light') this.deviceState.light.set(room, state as any);
-    if (device === 'door') this.deviceState.door.set(room, state as any);
+    switch (category) {
+      case 'device-register':
+        // đăng kí thiết bị
+        await this.handleDeviceTopic(room, message);
+        break;
 
-    // update DB (có điều kiện)
-    await this.deviceService.upsert({
-      id: `${room}-${device}`,
-      name: `${room} ${device}`,
-      type: device === 'light' ? DeviceType.LIGHT : DeviceType.DOOR,
-      location: room,
-      lastState: state,
-      status: DeviceStatus.ONLINE,
-    });
+      // hiển thị trạng thái (đèn, cửa)
+      case 'device-status':
+        await this.handleStatusTopic(room, device, message);
+        break;
+
+      // hiển thị độ ẩm, nhiệt độ, gas, ánh sáng...
+      case 'sensor-device':
+        await this.handleSensorTopic(room, message);
+        break;
+
+      default:
+        return;
+    }
   }
   // private async processSensorData(deviceId: string, sensorType: string, data: any) {
   //   const location = data?.location // lấy phòng từ payload nếu có
@@ -199,6 +217,110 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
   //   await this.deviceService.updateStatus(deviceId, 'online')
   //   // TODO: lưu time-series (Phase 5) + broadcast WebSocket
   // }
+
+  private async handleDeviceTopic(room: string, message: Buffer) {
+    // đăng kí thiết bị (sensors)
+
+    try {
+      const payload = JSON.parse(message.toString());
+      console.log('Register payload:', payload);
+
+      await this.deviceService.upsert({
+        ...payload,
+        location: room,
+        status: DeviceStatus.ONLINE,
+      });
+
+      this.logger.log(`📟 Sensor registered [${room}] → ${payload.id}`);
+    } catch (err) {
+      this.logger.error('❌ Device register failed', err);
+    }
+  }
+
+  private async handleStatusTopic(
+    room: string,
+    device: string,
+    message: Buffer,
+  ) {
+    // light/door
+    const payload = message.toString().trim();
+
+    const state = this.mapStatusToState(device, payload);
+    if (!state) return;
+
+    // RAM
+    // this.updateDeviceState(room, device, state);
+
+    // gửi về cho front bằng socket.
+
+    // DB
+    await this.deviceService.upsert({
+      id: `${room}-${device}`,
+      name: `${room} ${device}`,
+      type: device === 'light' ? DeviceType.LIGHT : DeviceType.DOOR,
+      location: room,
+      lastState: state,
+      status: DeviceStatus.ONLINE,
+    });
+
+    const devices = await this.deviceService.findAll();
+    const eachRoomDevices = devices.filter(d => d.location === room);
+
+    const deviceStatistics = getDeviceStatistics(devices);
+    const eachRoomDeviceStatistics = getDeviceStatistics(eachRoomDevices);
+
+    
+
+
+    // gửi cho từng phòng.
+    this.socketGateway.emitDevice(room, eachRoomDeviceStatistics);
+
+    // gửi tổng quan tất cả thiết bị
+    this.socketGateway.emitDevices(deviceStatistics);
+
+  }
+
+  private mapStatusToState(
+    device: string,
+    payload: string,
+  ): string | undefined {
+    const map = {
+      light: {
+        ON: 'on',
+        OFF: 'off',
+      },
+      door: {
+        LOCKED: 'closed',
+        UNLOCKED: 'open',
+      },
+    };
+
+    return map[device]?.[payload];
+  }
+
+  private async handleSensorTopic(room: string, message: Buffer) {
+    const payload = JSON.parse(message.toString());
+    console.log(room);
+    console.log('Sensor data payload:', payload);
+    this.socketGateway.emitSensor(room, payload);
+    // lưu vào DB nếu cần
+    const roomExists = await this.roomSensorSnapshotRepo.findOne({
+      where: { location: room },
+    });
+    if (roomExists) {
+      await this.roomSensorSnapshotRepo.save({
+        ...roomExists,
+        ...payload,
+        location: room,
+      });
+    } else {
+      const newSnapshot = this.roomSensorSnapshotRepo.create({
+        ...payload,
+        location: room,
+      });
+      await this.roomSensorSnapshotRepo.save(newSnapshot);
+    }
+  }
 
   private async handleStatus(
     deviceId: string,
@@ -255,6 +377,28 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
             reject(error);
           } else {
             this.logger.log(`✅ Published command to ${topic}:`, payload);
+            resolve();
+          }
+        },
+      );
+    });
+  }
+
+  async getSensorData(room: string) {
+    const topic = `${room}/command/get-sensor-data`;
+    const message = JSON.stringify({ command: 'get-sensor-data' });
+    return new Promise<void>((resolve, reject) => {
+      this.client.publish(
+        topic,
+        message,
+        { qos: 1, retain: false },
+        (error) => {
+          if (error) {
+            this.logger.error(`❌ Failed to publish to ${topic}:`, error);
+            this.logger.error(`   Error details: ${error.message}`);
+            reject(error);
+          } else {
+            this.logger.log(`✅ Published command to ${topic}:`, message);
             resolve();
           }
         },

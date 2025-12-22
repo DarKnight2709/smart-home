@@ -6,6 +6,11 @@ import { BedRoomStateDto } from './bedroom.dto';
 export class BedroomController {
   constructor(private readonly bedroomService: BedroomService) {}
 
+  @Get("details")
+  async getDetails() {
+    return await this.bedroomService.getDetails();
+  }
+
   @Get()
   getStatus() {
     return this.bedroomService.getStatus();

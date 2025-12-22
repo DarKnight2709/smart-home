@@ -24,6 +24,7 @@ import { LivingRoomModule } from './modules/living-room/living-room.module';
 import { BedroomModule } from './modules/bedroom/bedroom.module';
 import { KitchenModule } from './modules/kitchen/kitchen.module';
 import { OverviewModule } from './modules/overview/overview.module';
+import { SocketModule } from './modules/socket/socket.module';
 // import { WebSocketModule } from './modules/websocket/websocket.module'; // Tạm thời tắt Socket.IO
 @Module({
   imports: [
@@ -40,7 +41,7 @@ import { OverviewModule } from './modules/overview/overview.module';
     BedroomModule,
     KitchenModule,
     OverviewModule,
-    // WebSocketModule // Tạm thời tắt Socket.IO
+    SocketModule // Tạm thời tắt Socket.IO
   ],
   controllers: [],
   providers: [

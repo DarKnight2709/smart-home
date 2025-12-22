@@ -15,8 +15,8 @@ export class Device {
   })
   type: DeviceType;
 
-  @Column({ type: 'varchar', length: 50 })
-  lastState: string;
+  @Column({ type: 'varchar', length: 50, nullable: true })
+  lastState?: string;
 
   @Column({ type: 'varchar', length: 100 })
   location: string;

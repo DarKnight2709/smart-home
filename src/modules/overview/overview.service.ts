@@ -1,3 +1,4 @@
+import { getDeviceStatistics } from './../../shared/utils/getDeviceStatistics';
 // overview.service.ts
 import { Injectable } from '@nestjs/common';
 import { DeviceService } from '../device/device.service';
@@ -7,6 +8,9 @@ import { DeviceStatus, DeviceType } from 'src/shared/enums/device.enum';
 import { LivingRoomService } from '../living-room/living-room.service';
 import { BedroomService } from '../bedroom/bedroom.service';
 import { KitchenService } from '../kitchen/kitchen.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { RoomSensorSnapshotEntity } from 'src/database/entities/sensor-data.entity';
 
 @Injectable()
 export class OverviewService {
@@ -16,28 +20,23 @@ export class OverviewService {
     private readonly livingRoomMqttService: LivingRoomService,
     private readonly bedroomMqttService: BedroomService,
     private readonly kitchenMqttService: KitchenService,
+    @InjectRepository(RoomSensorSnapshotEntity)
+    private readonly roomSensorSnapshotRepo: Repository<RoomSensorSnapshotEntity>,
   ) {}
 
   // Lấy trạng thái tổng quan và danh sách thiết bị
   async getOverview() {
+    // gọi socket để lấy báo cho các phòng gửi các dữ liệu sensor
+
+    const rooms = await this.roomSensorSnapshotRepo.find();
+
     const devices = await this.deviceService.findAll();
-    // Đèn bật: type=LIGHT, lastState='on'
-    const lightsOn = devices.filter(
-      (d) => d.type === DeviceType.LIGHT && d.lastState === 'on',
-    ).length;
-    // Cửa mở: type=DOOR, lastState='open'
-    const doorsOpen = devices.filter(
-      (d) => d.type === DeviceType.DOOR && d.lastState === 'open',
-    ).length;
-    // Thiết bị online
-    const devicesOnline = devices.filter((d) => d.status === DeviceStatus.ONLINE).length;
-    const devicesTotal = devices.length;
+
+    const deviceStatistics = getDeviceStatistics(devices);
+
     return {
       quickStatus: {
-        lightsOn,
-        doorsOpen,
-        devicesOnline,
-        devicesTotal,
+        ...deviceStatistics
       },
       devices: devices.map((device) => ({
         id: device.id,
@@ -47,51 +46,51 @@ export class OverviewService {
         lastState: device.lastState,
         status: device.status,
       })),
+      rooms: rooms,
     };
   }
 
-async controlAllLights(state: boolean) {
-  try {
-    // Gửi lệnh MQTT tới từng phòng
-    await this.livingRoomMqttService.controlLight(state);
-    await this.bedroomMqttService.controlLight(state);
-    // Nếu có kitchen service
-    await this.kitchenMqttService.controlLight(state);
+  async controlAllLights(state: boolean) {
+    try {
+      // Gửi lệnh MQTT tới từng phòng
+      await this.livingRoomMqttService.controlLight(state);
+      await this.bedroomMqttService.controlLight(state);
+      // Nếu có kitchen service
+      await this.kitchenMqttService.controlLight(state);
 
-    // Cập nhật trạng thái trong database
-    // await this.deviceService.updateMany(
-    //   { type: DeviceType.LIGHT },
-    //   { lastState: state ? 'on' : 'off' }
-    // );
+      // Cập nhật trạng thái trong database
+      // await this.deviceService.updateMany(
+      //   { type: DeviceType.LIGHT },
+      //   { lastState: state ? 'on' : 'off' }
+      // );
 
-    return { success: true };
-  } catch (error) {
-    console.error('Error controlling all lights:', error);
-    throw new Error('Không thể điều khiển tất cả đèn');
+      return { success: true };
+    } catch (error) {
+      console.error('Error controlling all lights:', error);
+      throw new Error('Không thể điều khiển tất cả đèn');
+    }
   }
-}
 
-async controlAllDoors(state: boolean) {
-  try {
-    // Gửi lệnh MQTT tới từng phòng
-    await this.livingRoomMqttService.controlDoor(state);
-    // await this.bedroomMqttService.controlDoor(state);
-    // Nếu có kitchen service
-    // await this.kitchenMqttService.controlDoor(state);
+  async controlAllDoors(state: boolean) {
+    try {
+      // Gửi lệnh MQTT tới từng phòng
+      await this.livingRoomMqttService.controlDoor(state);
+      // await this.bedroomMqttService.controlDoor(state);
+      // Nếu có kitchen service
+      // await this.kitchenMqttService.controlDoor(state);
 
-    // Cập nhật trạng thái trong database
-    // await this.deviceService.updateMany(
-    //   { type: DeviceType.DOOR },
-    //   { lastState: state ? 'open' : 'closed' }
-    // );
+      // Cập nhật trạng thái trong database
+      // await this.deviceService.updateMany(
+      //   { type: DeviceType.DOOR },
+      //   { lastState: state ? 'open' : 'closed' }
+      // );
 
-    return { success: true };
-  } catch (error) {
-    console.error('Error controlling all doors:', error);
-    throw new Error('Không thể điều khiển tất cả cửa');
+      return { success: true };
+    } catch (error) {
+      console.error('Error controlling all doors:', error);
+      throw new Error('Không thể điều khiển tất cả cửa');
+    }
   }
-}
-
 
   // Optionally: điều khiển thiết bị từ overview
   // async controlDevice(deviceId: string, command: string) {

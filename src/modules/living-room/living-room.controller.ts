@@ -6,9 +6,14 @@ import { LivingRoomStateDto } from './living-room.dto';
 export class LivingRoomController {
   constructor(private readonly livingRoomService: LivingRoomService) {}
 
-  @Get()
-  getStatus() {
-    return this.livingRoomService.getStatus();
+  // @Get()
+  // getStatus() {
+  //   return this.livingRoomService.getStatus();
+  // }
+
+  @Get("details")
+  async getDetails() {
+    return await this.livingRoomService.getDetails();
   }
 
   @Post('light')
