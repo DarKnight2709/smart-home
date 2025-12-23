@@ -1,6 +1,7 @@
-import { Controller, Get } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { PermissionService } from './permission.service';
+import { UpdatePermissionNameDto } from './permission.dto';
 
 @ApiTags('Permission')
 @Controller('permissions')
@@ -18,5 +19,16 @@ export class PermissionController {
   })
   async getRoles() {
     return await this.permissionSevice.findAll();
+  }
+
+  @Patch(':id')
+  @ApiOperation({
+    summary: 'Cập nhật tên quyền',
+  })
+  async updatePermissionName(
+    @Param('id') id: string,
+    @Body() dto: UpdatePermissionNameDto,
+  ) {
+    return this.permissionSevice.updateName(id, dto);
   }
 }

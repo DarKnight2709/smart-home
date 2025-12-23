@@ -3,12 +3,14 @@ import {
   Injectable,
   InternalServerErrorException,
   Logger,
+  NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { PermissionEntity } from 'src/database/entities/permission.entity';
 import { HttpMethod } from 'src/shared/enums/http-method.enum';
 import { IRouteInfo } from 'src/shared/types';
 import { Repository } from 'typeorm';
+import { UpdatePermissionNameDto } from './permission.dto';
 
 @Injectable()
 export class PermissionService {
@@ -36,6 +38,16 @@ export class PermissionService {
       console.log(error);
       throw new InternalServerErrorException("Lỗi server")
     }
+  }
+
+  async updateName(id: string, dto: UpdatePermissionNameDto) {
+    const permission = await this.permissionRepository.findOne({ where: { id } });
+    if (!permission) {
+      throw new NotFoundException('Permission not found');
+    }
+
+    permission.name = dto.name;
+    return this.permissionRepository.save(permission);
   }
 
   async syncPermissions(routes: IRouteInfo[]) {

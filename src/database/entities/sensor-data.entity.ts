@@ -4,7 +4,7 @@ import {
   PrimaryGeneratedColumn,
   Column,
   UpdateDateColumn,
-  Index
+  Index,
 } from 'typeorm';
 
 @Entity('room_sensor_snapshot')
@@ -35,7 +35,13 @@ export class RoomSensorSnapshotEntity {
   hasWarning: boolean;
 
   @Column({ type: 'text', nullable: true })
-  warningMessage?: string;
+  temperatureWarningMessage?: string;
+
+  @Column({ type: 'text', nullable: true })
+  gasWarningMessage?: string;
+
+  @Column({ type: 'text', nullable: true })
+  humidityWarningMessage?: string;
 
   @Exclude()
   // cập nhật mỗi lần có sensor gửi lên

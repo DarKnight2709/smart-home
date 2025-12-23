@@ -13,6 +13,7 @@ import { RoomSensorSnapshotEntity } from 'src/database/entities/sensor-data.enti
 import { Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { getDeviceStatistics } from 'src/shared/utils/getDeviceStatistics';
+import { SettingService } from '../setting/setting.service';
 
 interface SensorData {
   value: number;
@@ -36,6 +37,7 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
     private configService: ConfigService,
     private deviceService: DeviceService,
     private readonly socketGateway: SocketGateway,
+    private settingSevice: SettingService,
     @InjectRepository(RoomSensorSnapshotEntity)
     private readonly roomSensorSnapshotRepo: Repository<RoomSensorSnapshotEntity>,
   ) {
@@ -264,20 +266,16 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
     });
 
     const devices = await this.deviceService.findAll();
-    const eachRoomDevices = devices.filter(d => d.location === room);
+    const eachRoomDevices = devices.filter((d) => d.location === room);
 
     const deviceStatistics = getDeviceStatistics(devices);
     const eachRoomDeviceStatistics = getDeviceStatistics(eachRoomDevices);
-
-    
-
 
     // gửi cho từng phòng.
     this.socketGateway.emitDevice(room, eachRoomDeviceStatistics);
 
     // gửi tổng quan tất cả thiết bị
     this.socketGateway.emitDevices(deviceStatistics);
-
   }
 
   private mapStatusToState(
@@ -302,7 +300,40 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
     const payload = JSON.parse(message.toString());
     console.log(room);
     console.log('Sensor data payload:', payload);
-    this.socketGateway.emitSensor(room, payload);
+    // kiểm tra xem nhiệt độ, độ ẩm, gas có đạt yêu cầu không. Nếu không đưa ra cảnh báo.
+
+    const data = {
+      ...payload,
+      hasWarning: false,
+    };
+    const settings = await this.settingSevice.findAll();
+    const settingMap = new Map(
+      settings.map((s) => [s.sensorType, { min: s.min, max: s.max }]),
+    );
+
+    const sensors: { key: string; label: string }[] = [
+      { key: 'temperature', label: 'Nhiệt độ' },
+      { key: 'humidity', label: 'Độ ẩm' },
+      { key: 'gas', label: 'Gas' },
+    ];
+
+    for (const sensor of sensors) {
+      const value = data[sensor.key];
+      const setting = settingMap.get(sensor.key);
+
+      if (typeof value === 'number' && setting) {
+        const warning = this.checkWarning(value, sensor.label, setting);
+        if (warning) {
+          data.hasWarning = true;
+          data[`${sensor.key}WarningMessage`] = warning;
+        } else {
+          data[`${sensor.key}WarningMessage`] = "";
+        }
+      }
+    }
+    console.log(data);
+
+    this.socketGateway.emitSensor(room, data);
     // lưu vào DB nếu cần
     const roomExists = await this.roomSensorSnapshotRepo.findOne({
       where: { location: room },
@@ -310,16 +341,35 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
     if (roomExists) {
       await this.roomSensorSnapshotRepo.save({
         ...roomExists,
-        ...payload,
+        ...data,
         location: room,
       });
     } else {
       const newSnapshot = this.roomSensorSnapshotRepo.create({
-        ...payload,
+        ...data,
         location: room,
       });
       await this.roomSensorSnapshotRepo.save(newSnapshot);
     }
+  }
+
+  private checkWarning(
+    value: number | undefined,
+    label: string,
+
+    setting?: { min: number; max: number },
+  ) {
+    if (value == null || !setting) return null;
+
+    if (value < setting.min) {
+      return `${label} dưới mức cho phép`;
+    }
+
+    if (value > setting.max) {
+      return `${label} trên mức cho phép`;
+    }
+
+    return null;
   }
 
   private async handleStatus(

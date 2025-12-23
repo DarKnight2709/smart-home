@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Patch } from '@nestjs/common';
 import { LivingRoomService } from './living-room.service';
 import { LivingRoomStateDto } from './living-room.dto';
 
@@ -16,13 +16,13 @@ export class LivingRoomController {
     return await this.livingRoomService.getDetails();
   }
 
-  @Post('light')
+  @Patch('light')
   async controlLight(@Body() body: LivingRoomStateDto) {
     await this.livingRoomService.controlLight(body.state);
     return { success: true, message: `Light turned ${body.state ? 'ON' : 'OFF'}` };
   }
 
-  @Post('door')
+  @Patch('door')
   async controlDoor(@Body() body: LivingRoomStateDto) {
     await this.livingRoomService.controlDoor(body.state);
     return { success: true, message: `Door ${body.state ? 'UNLOCK' : 'LOCK'}` };

@@ -28,6 +28,7 @@ export class UserService {
       "user.username",
       "user.fullName",
       "user.gender",
+      "user.email",
       "user.phone",
       "user.currentAddress",
       "user.dateOfBirth",
