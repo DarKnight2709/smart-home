@@ -9,6 +9,7 @@ export const corsConfig = (
   const whiteList = [
     configService.get("API_URL"),
     configService.get("CLIENT_URL"),
+    "https://localhost",
     'http://localhost:3000',
     'http://localhost:3001',
     'http://localhost:5173',
