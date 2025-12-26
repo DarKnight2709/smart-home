@@ -41,9 +41,24 @@ export class EnvironmentValidation {
   CLIENT_URL: string;
 
   // Database
+    @IsString()
+  DB_HOST: string;
+
+  @IsNumber()
+  @Transform(({ value }) => (value ? parseInt(value, 10) : 3306))
+  DB_PORT: number = 3306;
 
   @IsString()
-  DATABASE_URL: string;
+  DB_USERNAME: string;
+
+  @IsString()
+  DB_PASSWORD: string;
+
+  @IsString()
+  DB_NAME: string;
+
+  // @IsString()
+  // DATABASE_URL: string;
 
   // Swagger
   @IsString()
