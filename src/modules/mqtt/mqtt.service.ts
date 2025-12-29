@@ -15,6 +15,14 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { getDeviceStatistics } from 'src/shared/utils/getDeviceStatistics';
 import { SettingService } from '../setting/setting.service';
 import { Device } from 'src/database/entities/device.entity';
+import { EmailService } from '../notification/email.service';
+import { SecuritySettingService } from '../setting/security-setting.service';
+import { NotificationService } from '../notification/notification.service';
+import {
+  NotificationSeverity,
+  NotificationType,
+} from 'src/shared/enums/notification.enum';
+import { SecuritySettingKey } from 'src/shared/enums/security-setting-key.enum';
 
 interface SensorData {
   value: number;
@@ -23,16 +31,23 @@ interface SensorData {
   sensorType: string;
 }
 
+// Track failed password attempts
+interface FailedAttempt {
+  count: number;
+  firstAttemptTime: Date;
+  lastAttemptTime: Date;
+  notificationSent: boolean;
+}
+
 @Injectable()
 export class MqttService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(MqttService.name);
   private client: mqtt.MqttClient;
   private readonly brokerUrl: string;
   private messageHandlers: Map<string, (data: any) => void> = new Map();
-  private deviceState = {
-    light: new Map<string, 'on' | 'off'>(),
-    door: new Map<string, 'open' | 'closed'>(),
-  };
+
+  // Track failed password attempts: key = "room:deviceId"
+  private failedPasswordAttempts: Map<string, FailedAttempt> = new Map();
 
   constructor(
     private configService: ConfigService,
@@ -43,10 +58,16 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
     private readonly roomSensorSnapshotRepo: Repository<RoomSensorSnapshotEntity>,
     @InjectRepository(Device)
     private readonly deviceRepository: Repository<Device>,
+    private readonly notificationService: NotificationService,
+    private readonly securitySettingService: SecuritySettingService,
+    private readonly emailService: EmailService,
   ) {
     this.brokerUrl =
       this.configService.get('MQTT_BROKER_URL') ||
       'mqtt://test.mosquitto.org:1883';
+
+    // Initialize cleanup interval for failed attempts (every 5 minutes)
+    setInterval(() => this.cleanupOldFailedAttempts(), 5 * 60 * 1000);
   }
 
   async onModuleInit() {
@@ -128,9 +149,8 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
       }
     });
 
-
     // Subscribe to device status: +/status/+
-    this.client.subscribe('+/device-status/+', { qos: 1 }, (err) => {
+    this.client.subscribe('+/device-status/+/+', { qos: 1 }, (err) => {
       if (err) {
         this.logger.error(
           `❌ Failed to subscribe to '+/device-status/+': ${err.message}`,
@@ -140,15 +160,41 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
       }
     });
 
-    // Subscribe to password request: +/request/password
-    this.client.subscribe('+/request/password', { qos: 1 }, (err) => {
+    // Subscribe auto status từ ESP32
+    this.client.subscribe('+/device-status/auto', { qos: 1 }, (err) => {
       if (err) {
         this.logger.error(
-          `❌ Failed to subscribe to '+/request/password': ${err.message}`,
+          `❌ Failed to subscribe '+/device-status/auto': ${err.message}`,
         );
       } else {
         this.logger.log(
-          '✅ Subscribed to password request topics: +/request/password',
+          '✅ Subscribed to auto device status: +/device-status/auto',
+        );
+      }
+    });
+
+    // Subscribe to password request: +/request/password hoặc +/request/password/+
+    this.client.subscribe('+/request/password/+', { qos: 1 }, (err) => {
+      if (err) {
+        this.logger.error(
+          `❌ Failed to subscribe to '+/request/password/+': ${err.message}`,
+        );
+      } else {
+        this.logger.log(
+          '✅ Subscribed to password request topics: +/request/password/+',
+        );
+      }
+    });
+
+    // Subscribe to password validation results: +/password-validation/+
+    this.client.subscribe('+/password-validation/+', { qos: 1 }, (err) => {
+      if (err) {
+        this.logger.error(
+          `❌ Failed to subscribe to '+/password-validation/+': ${err.message}`,
+        );
+      } else {
+        this.logger.log(
+          '✅ Subscribed to password validation topics: +/password-validation/+',
         );
       }
     });
@@ -166,35 +212,6 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  // private handleMessage(topic: string, message: Buffer) {
-  //   try {
-  //     const data = JSON.parse(message.toString());
-  //     this.logger.debug(`📨 Received message on ${topic}:`, data);
-
-  //     // Parse topic: devices/{deviceId}/sensor/{sensorType}
-  //     const topicParts = topic.split('/');
-
-  //     if (topicParts.length >= 4 && topicParts[0] === 'devices') {
-  //       const deviceId = topicParts[1];
-  //       const sensorType = topicParts[3];
-
-  //       // Gọi custom handler nếu có
-  //       const handler = this.messageHandlers.get(topic);
-  //       if (handler) {
-  //         handler({ deviceId, sensorType, data });
-  //       }
-
-  //       // Xử lý dữ liệu cảm biến
-  //       this.processSensorData(deviceId, sensorType, data);
-  //     } else if (topicParts.length === 3 && topicParts[2] === 'status') {
-  //       const deviceId = topicParts[1];
-  //       this.logger.log(`📊 Device ${deviceId} status: ${data}`);
-  //       this.handleStatus(deviceId, data);
-  //     }
-  //   } catch (error) {
-  //     this.logger.error(`❌ Error parsing message from ${topic}:`, error);
-  //   }
-  // }
   private async handleMessage(topic: string, message: Buffer) {
     console.log(topic);
     console.log(message.toString());
@@ -205,9 +222,7 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
     let room = parts[0];
     let category = parts[1];
     let device = '';
-    if (parts.length === 3) {
-      device = parts[2];
-    }
+
     console.log('topic: ', topic);
     console.log('message: ', message.toString());
 
@@ -219,7 +234,12 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
 
       // hiển thị trạng thái (đèn, cửa, password)
       case 'device-status':
-        await this.handleStatusTopic(room, device, message);
+        const devicePath = parts.slice(2).join('/'); // để lấy đúng device dạng light/LV_Light_01
+        if (devicePath === 'auto') {
+          await this.handleAutoStatus(room, message);
+        } else {
+          await this.handleStatusTopic(room, devicePath, message);
+        }
         break;
 
       // hiển thị độ ẩm, nhiệt độ, gas, ánh sáng...
@@ -229,10 +249,24 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
 
       // yêu cầu lấy mật khẩu
       case 'request':
+        device = parts[2]; // password
+        const deviceId = parts[3]; // deviceId nếu có
         if (device === 'password') {
-          await this.handlePasswordRequest(room);
+          await this.handlePasswordRequest(room, deviceId);
         }
         break;
+
+      // password validation result
+      case 'password-validation':
+        const passwordDeviceId = parts[2]; // device ID
+        const validationResult = message.toString().trim(); // SUCCESS or FAILED
+        await this.handlePasswordValidation(
+          room,
+          passwordDeviceId,
+          validationResult,
+        );
+        break;
+
       case 'current-status':
         await this.handleCurrentStatusTopic(room, message);
         break;
@@ -254,6 +288,15 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
   //   // TODO: lưu time-series (Phase 5) + broadcast WebSocket
   // }
 
+  private async handleAutoStatus(room: string, message: Buffer) {
+    const payload = message.toString();
+    this.logger.log(`🤖 Auto status from ${room}: ${payload}`);
+
+    // Xử lý payload auto, ví dụ lưu vào DB hoặc broadcast qua socket
+    // const data = JSON.parse(payload);
+    // sửa
+    this.socketGateway.emitDeviceStatus(room, { auto: payload });
+  }
   private async handleCurrentStatusTopic(room: string, message: Buffer) {
     const status = message.toString(); // online | offline
     console.log('status: ', status);
@@ -272,15 +315,34 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
 
     // update light and door lastState
     if (status === 'offline') {
-      await this.deviceRepository.update(
-        {
+      // Lấy tất cả thiết bị trong phòng
+      const devices = await this.deviceRepository.find({
+        where: {
           location: room,
-          type: In([DeviceType.LIGHT, DeviceType.DOOR]),
+          type: In([DeviceType.LIGHT, DeviceType.DOOR, DeviceType.WINDOW]),
         },
-        {
-          lastState: 'off',
-        },
-      );
+      });
+
+      // Cập nhật từng thiết bị theo type
+      for (const device of devices) {
+        let newState = '';
+        switch (device.type) {
+          case DeviceType.LIGHT:
+            newState = 'off';
+            break;
+          case DeviceType.DOOR:
+            newState = 'locked';
+            break;
+          case DeviceType.WINDOW:
+            newState = 'closed';
+            break;
+        }
+
+        await this.deviceRepository.update(
+          { id: device.id },
+          { lastState: newState },
+        );
+      }
     }
 
     const devices = await this.deviceService.findAll();
@@ -302,6 +364,12 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
     try {
       const payload = JSON.parse(message.toString());
       console.log('Register payload:', payload);
+      if (!payload.id || !payload.type) {
+        this.logger.warn(
+          `Invalid device payload from ${room}: ${message.toString()}`,
+        );
+        return;
+      }
 
       await this.deviceService.upsert({
         ...payload,
@@ -317,41 +385,57 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
 
   private async handleStatusTopic(
     room: string,
-    device: string,
+    devicePath: string,
     message: Buffer,
   ) {
     // light/door/password
     const payload = message.toString().trim();
 
     // Xử lý password từ wokwi
-    if (device === 'password') {
+    if (devicePath === 'password') {
       await this.handlePasswordFromWokwi(room, payload);
       return;
     }
 
-    const state = this.mapStatusToState(device, payload);
+    console.log('devicePath: ', devicePath);
+    // Tách type và id
+    const [type, deviceId] = devicePath.split('/'); // type = "light" hoặc "door", deviceId = "LV_Light_01"
+
+    if (!deviceId) {
+      this.logger.warn(
+        `⚠️ Ignoring device-status without deviceId: ${room}/${devicePath}`,
+      );
+      return;
+    }
+
+    const state = this.mapStatusToState(type, payload);
     if (!state) return;
-
-    // RAM
-    // this.updateDeviceState(room, device, state);
-
-    // gửi về cho front bằng socket.
 
     // DB
     await this.deviceService.upsert({
-      id: `${room}-${device}`,
-      name: `${room} ${device}`,
-      type: device === 'light' ? DeviceType.LIGHT : DeviceType.DOOR,
+      // sửa id
+      id: `${deviceId}`, // nếu deviceId undefined thì fallback
+      name: `${room} ${deviceId || type}`,
+      type:
+        type === 'light'
+          ? DeviceType.LIGHT
+          : type === 'door'
+            ? DeviceType.DOOR
+            : DeviceType.WINDOW,
       location: room,
       lastState: state,
       status: DeviceStatus.ONLINE,
     });
+    console.log(
+      'Updated device status in DB' + room + ' ' + deviceId + ' ' + state,
+    );
 
     const devices = await this.deviceService.findAll();
     const eachRoomDevices = devices.filter((d) => d.location === room);
 
     const deviceStatistics = getDeviceStatistics(devices);
     const eachRoomDeviceStatistics = getDeviceStatistics(eachRoomDevices);
+    console.log('eachRoomDeviceStatistics: ', eachRoomDeviceStatistics);
 
     // gửi cho từng phòng.
     this.socketGateway.emitDevice(room, eachRoomDeviceStatistics);
@@ -360,22 +444,23 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
     this.socketGateway.emitDevices(deviceStatistics);
   }
 
-  private mapStatusToState(
-    device: string,
-    payload: string,
-  ): string | undefined {
+  private mapStatusToState(type: string, payload: string): string | undefined {
     const map = {
       light: {
         ON: 'on',
         OFF: 'off',
       },
       door: {
-        LOCKED: 'closed',
-        UNLOCKED: 'open',
+        LOCKED: 'locked',
+        UNLOCKED: 'unlocked',
+      },
+      window: {
+        CLOSED: 'closed',
+        OPENED: 'opened',
       },
     };
 
-    return map[device]?.[payload];
+    return map[type]?.[payload];
   }
 
   private async handleSensorTopic(room: string, message: Buffer) {
@@ -383,16 +468,18 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
     console.log(room);
     console.log('Sensor data payload:', payload);
     // kiểm tra xem nhiệt độ, độ ẩm, gas có đạt yêu cầu không. Nếu không đưa ra cảnh báo.
-    console.log("Gas" + payload.gas);
+    console.log('Gas' + payload.gas);
 
     const data = {
       ...payload,
       hasWarning: false,
     };
 
-    if(payload?.gas) {
+    if (payload?.gas) {
       data.hasWarning = true;
-      data["gasWarningMessage"] = "Phát hiện rò rỉ khí gas"
+      data['gasWarningMessage'] = 'Phát hiện rò rỉ khí gas';
+    } else {
+      data['gasWarningMessage'] = '';
     }
 
     const settings = await this.settingSevice.findAll();
@@ -467,55 +554,56 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
   }
 
   // Publish command to device
-  async publishCommand(room: string, device: string, payload: any) {
-    // Kiểm tra kết nối trước khi publish
-    if (!this.client || !this.client.connected) {
-      const error = new Error(
-        `MQTT client is not connected. Broker: ${this.brokerUrl}`,
-      );
-      this.logger.error(`❌ Cannot publish command: ${error.message}`);
-      return Promise.reject(error);
-    }
+  // async publishCommand(room: string, device: string, payload: any) {
+  //   // Kiểm tra kết nối trước khi publish
+  //   if (!this.client || !this.client.connected) {
+  //     const error = new Error(
+  //       `MQTT client is not connected. Broker: ${this.brokerUrl}`,
+  //     );
+  //     this.logger.error(`❌ Cannot publish command: ${error.message}`);
+  //     return Promise.reject(error);
+  //   }
 
-    // // kiểm tra thiết bị xem có offline không?
-    // const deviceEntity = await this.deviceRepository.findOne({
-    //   where: {
-    //     location: room,
-    //     type: device === 'light' ? DeviceType.LIGHT : DeviceType.DOOR,
-    //   },
-    // });
-    // if (!deviceEntity || deviceEntity.status === DeviceStatus.OFFLINE) {
-    //   const error = new Error(`Device not found in ${room}`);
-    //   this.logger.error(`❌ Cannot publish command: ${error.message}`);
-    //   return Promise.reject(error);
-    // }
+  //   // // kiểm tra thiết bị xem có offline không?
+  //   // const deviceEntity = await this.deviceRepository.findOne({
+  //   //   where: {
+  //   //     location: room,
+  //   //     type: device === 'light' ? DeviceType.LIGHT : DeviceType.DOOR,
+  //   //   },
+  //   // });
+  //   // if (!deviceEntity || deviceEntity.status === DeviceStatus.OFFLINE) {
+  //   //   const error = new Error(`Device not found in ${room}`);
+  //   //   this.logger.error(`❌ Cannot publish command: ${error.message}`);
+  //   //   return Promise.reject(error);
+  //   // }
 
-    const topic = `${room}/command/${device}`;
-    const message = payload;
+  //   // sửa thêm đèn với id
+  //   const topic = `${room}/command/${device}`;
+  //   const message = payload;
 
-    this.logger.debug(
-      `📤 Attempting to publish to ${topic} with payload:`,
-      payload,
-    );
+  //   this.logger.debug(
+  //     `📤 Attempting to publish to ${topic} with payload:`,
+  //     payload,
+  //   );
 
-    return new Promise<void>((resolve, reject) => {
-      this.client.publish(
-        topic,
-        message,
-        { qos: 1, retain: false },
-        (error) => {
-          if (error) {
-            this.logger.error(`❌ Failed to publish to ${topic}:`, error);
-            this.logger.error(`   Error details: ${error.message}`);
-            reject(error);
-          } else {
-            this.logger.log(`✅ Published command to ${topic}:`, payload);
-            resolve();
-          }
-        },
-      );
-    });
-  }
+  //   return new Promise<void>((resolve, reject) => {
+  //     this.client.publish(
+  //       topic,
+  //       message,
+  //       { qos: 1, retain: false },
+  //       (error) => {
+  //         if (error) {
+  //           this.logger.error(`❌ Failed to publish to ${topic}:`, error);
+  //           this.logger.error(`   Error details: ${error.message}`);
+  //           reject(error);
+  //         } else {
+  //           this.logger.log(`✅ Published command to ${topic}:`, payload);
+  //           resolve();
+  //         }
+  //       },
+  //     );
+  //   });
+  // }
 
   async getSensorData(room: string) {
     const topic = `${room}/command/get-sensor-data`;
@@ -540,17 +628,146 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
   }
 
   // Control light
-  async controlLight(room: string, state: boolean) {
-    await this.publishCommand(room, 'light', state ? 'ON' : 'OFF');
+  // sửa thêm id
+  // async controlLight(room: string, state: boolean) {
+  //   await this.publishCommand(room, 'light', state ? 'ON' : 'OFF');
+  // }
+
+  async sendAutoCommand(room: string, command: any) {
+    if (!this.client || !this.client.connected) {
+      const error = new Error(
+        `MQTT client is not connected. Broker: ${this.brokerUrl}`,
+      );
+      this.logger.error(`❌ Cannot send auto command: ${error.message}`);
+      return Promise.reject(error);
+    }
+
+    const topic = `${room}/command/auto`;
+    const message =
+      typeof command === 'string' ? command : JSON.stringify(command);
+
+    this.logger.debug(`📤 Publishing auto command to ${topic}: ${message}`);
+
+    return new Promise<void>((resolve, reject) => {
+      this.client.publish(topic, message, { qos: 1, retain: false }, (err) => {
+        if (err) {
+          this.logger.error(
+            `❌ Failed to publish auto command to ${topic}:`,
+            err,
+          );
+          reject(err);
+        } else {
+          this.logger.log(`✅ Published auto command to ${topic}`);
+          resolve();
+        }
+      });
+    });
+  }
+
+  // Control specific light by device ID
+  async controlSpecificLight(room: string, deviceId: string, state: boolean) {
+    if (!this.client || !this.client.connected) {
+      const error = new Error(
+        `MQTT client is not connected. Broker: ${this.brokerUrl}`,
+      );
+      this.logger.error(`❌ Cannot control specific light: ${error.message}`);
+      return Promise.reject(error);
+    }
+
+    const topic = `${room}/command/light/${deviceId}`;
+    const message = state ? 'ON' : 'OFF';
+    this.logger.debug(`📤 Publishing to ${topic}: ${message}`);
+
+    return new Promise<void>((resolve, reject) => {
+      this.client.publish(
+        topic,
+        message,
+        { qos: 1, retain: false },
+        (error) => {
+          if (error) {
+            this.logger.error(`❌ Failed to publish to ${topic}:`, error);
+            this.logger.error(`   Error details: ${error.message}`);
+            reject(error);
+          } else {
+            this.logger.log(`✅ Published command to ${topic}: ${message}`);
+            resolve();
+          }
+        },
+      );
+    });
+  }
+
+  // Control specific door by device ID
+  async controlSpecificDoor(room: string, deviceId: string, state: boolean) {
+    if (!this.client || !this.client.connected) {
+      const error = new Error(
+        `MQTT client is not connected. Broker: ${this.brokerUrl}`,
+      );
+      this.logger.error(`❌ Cannot control specific door: ${error.message}`);
+      return Promise.reject(error);
+    }
+
+    const topic = `${room}/command/door/${deviceId}`;
+    const message = state ? 'UNLOCK' : 'LOCK';
+    this.logger.debug(`📤 Publishing to ${topic}: ${message}`);
+
+    return new Promise<void>((resolve, reject) => {
+      this.client.publish(
+        topic,
+        message,
+        { qos: 1, retain: false },
+        (error) => {
+          if (error) {
+            this.logger.error(`❌ Failed to publish to ${topic}:`, error);
+            this.logger.error(`   Error details: ${error.message}`);
+            reject(error);
+          } else {
+            this.logger.log(`✅ Published command to ${topic}: ${message}`);
+            resolve();
+          }
+        },
+      );
+    });
+  }
+
+  async controlSpecificWindow(room: string, deviceId: string, state: boolean) {
+    if (!this.client || !this.client.connected) {
+      const error = new Error(
+        `MQTT client is not connected. Broker: ${this.brokerUrl}`,
+      );
+      this.logger.error(`❌ Cannot control specific window: ${error.message}`);
+      return Promise.reject(error);
+    }
+    const topic = `${room}/command/window/${deviceId}`;
+    const message = state ? 'OPEN' : 'CLOSE';
+    this.logger.debug(`📤 Publishing to ${topic}: ${message}`);
+
+    return new Promise<void>((resolve, reject) => {
+      this.client.publish(
+        topic,
+        message,
+        { qos: 1, retain: false },
+        (error) => {
+          if (error) {
+            this.logger.error(`❌ Failed to publish to ${topic}:`, error);
+            this.logger.error(`   Error details: ${error.message}`);
+            reject(error);
+          } else {
+            this.logger.log(`✅ Published command to ${topic}: ${message}`);
+            resolve();
+          }
+        },
+      );
+    });
   }
 
   // Control door
-  async controlDoor(room: string, state: boolean) {
-    await this.publishCommand(room, 'door', state ? 'UNLOCK' : 'LOCK');
-  }
+  // async controlDoor(room: string, state: boolean) {
+  //   await this.publishCommand(room, 'door', state ? 'UNLOCK' : 'LOCK');
+  // }
 
   // Publish password to wokwi (when password changed)
-  async publishPassword(room: string, password: string) {
+  async publishPassword(room: string, deviceId: string, password: string) {
     if (!this.client || !this.client.connected) {
       const error = new Error(
         `MQTT client is not connected. Broker: ${this.brokerUrl}`,
@@ -559,7 +776,7 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
       return Promise.reject(error);
     }
 
-    const topic = `${room}/response/password`;
+    const topic = `${room}/response/password/${deviceId}`;
     this.logger.debug(`📤 Publishing password to ${topic}`);
 
     return new Promise<void>((resolve, reject) => {
@@ -584,14 +801,21 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
   }
 
   // Handle password request from wokwi
-  private async handlePasswordRequest(room: string) {
+  private async handlePasswordRequest(room: string, deviceId?: string) {
     try {
       // Tìm door device và lấy password
+      const whereCondition: any = {
+        location: room,
+        type: DeviceType.DOOR,
+      };
+
+      // Nếu có deviceId thì tìm cụ thể
+      if (deviceId) {
+        whereCondition.id = deviceId;
+      }
+
       const doorDevice = await this.deviceRepository.findOne({
-        where: {
-          location: room,
-          type: DeviceType.DOOR,
-        },
+        where: whereCondition,
         select: {
           id: true,
           password: true,
@@ -604,7 +828,7 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
       }
 
       // Publish password về wokwi qua response topic
-      const topic = `${room}/response/password`;
+      const topic = `${room}/response/password/${doorDevice.id}`;
       this.logger.debug(`📤 Sending password to ${topic}`);
 
       this.client.publish(
@@ -652,6 +876,174 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
       this.logger.log(`✅ Password saved for door in ${room}`);
     } catch (error) {
       this.logger.error(`❌ Error saving password for ${room}:`, error);
+    }
+  }
+
+  // Handle password validation result from ESP32
+  private async handlePasswordValidation(
+    room: string,
+    deviceId: string,
+    result: string,
+  ): Promise<void> {
+    if (result === 'SUCCESS') {
+      // Reset failed attempts on successful login
+      this.resetFailedPasswordAttempts(room, deviceId);
+      this.logger.log(`✅ Password correct for ${deviceId} in ${room}`);
+    } else if (result === 'FAILED') {
+      // Track failed attempt
+      await this.trackFailedPasswordAttempt(room, deviceId);
+    }
+  }
+
+  // Track failed password attempt
+  async trackFailedPasswordAttempt(
+    room: string,
+    deviceId: string,
+  ): Promise<void> {
+    const key = `${room}:${deviceId}`;
+    const now = new Date();
+
+    // lấy setting security reset time.
+    const resetTimeMinutes = this.securitySettingService
+      ? await this.securitySettingService.getSettingValue<number>(
+          SecuritySettingKey.PASSWORD_ATTEMPT_RESET_TIME_MINUTES,
+          30,
+        )
+      : 30;
+
+    let attempt = this.failedPasswordAttempts.get(key);
+
+    if (!attempt) {
+      attempt = {
+        count: 1,
+        firstAttemptTime: now,
+        lastAttemptTime: now,
+        notificationSent: false,
+      };
+      this.failedPasswordAttempts.set(key, attempt);
+    } else {
+      if (
+        (now.getTime() - attempt.lastAttemptTime.getTime()) / 1000 / 60 >
+        resetTimeMinutes
+      ) {
+        // Nếu lần thử cuối cách đây hơn 30 phút, reset đếm
+        attempt.count = 1;
+        attempt.firstAttemptTime = now;
+        attempt.lastAttemptTime = now;
+        attempt.notificationSent = false;
+      } else {
+        attempt.count++;
+        attempt.lastAttemptTime = now;
+      }
+    }
+
+    this.logger.warn(
+      `⚠️ Failed password attempt ${attempt.count} for ${deviceId} in ${room}`,
+    );
+
+    // Check if exceeded threshold
+    await this.checkPasswordAttemptsThreshold(room, deviceId, attempt);
+  }
+
+  // Check if failed attempts exceeded threshold and create notification
+  private async checkPasswordAttemptsThreshold(
+    room: string,
+    deviceId: string,
+    attempt: FailedAttempt,
+  ): Promise<void> {
+    if (attempt.notificationSent) {
+      return; // Already sent notification for this series of attempts
+    }
+
+    try {
+      // Get max attempts from security settings (default 5)
+      const maxAttempts = this.securitySettingService
+        ? await this.securitySettingService.getSettingValue(
+            SecuritySettingKey.MAX_DOOR_PASSWORD_ATTEMPTS,
+            2,
+          )
+        : 5;
+
+      if (attempt.count >= maxAttempts) {
+        this.logger.error(
+          `🚨 SECURITY ALERT: ${attempt.count} failed password attempts for ${deviceId} in ${room}!`,
+        );
+
+        const roomDevice = await this.deviceRepository.findOne({
+          where: { id: deviceId, location: room },
+        });
+
+        // Create notification
+        if (this.notificationService) {
+          const notification = await this.notificationService.create({
+            type: NotificationType.SECURITY_ALERT,
+            title: `Cảnh báo nhập sai mật khẩu cửa ${room}`,
+            message: `Đã nhập sai mật khẩu ${roomDevice?.name} tại ${room} ${attempt.count} lần liên tiếp. Có khả năng ai đó đang cố gắng truy cập trái phép.`,
+            severity: NotificationSeverity.CRITICAL,
+            location: room,
+            deviceId: deviceId,
+            metadata: {
+              failedAttempts: attempt.count,
+              firstAttemptTime: attempt.firstAttemptTime,
+              lastAttemptTime: attempt.lastAttemptTime,
+            },
+          });
+
+          // Get users with notification permission
+          const usersWithPermission =
+            await this.notificationService.getUsersWithNotificationPermission(
+              'GET',
+              '/notifications', // Permission name
+            );
+
+          // Send email to users with permission
+          if (this.emailService && usersWithPermission.length > 0) {
+            const emailAddresses = usersWithPermission
+              .map((user: any) => user.email)
+              .filter((email: string) => email);
+
+            if (emailAddresses.length > 0) {
+              await this.emailService.sendSecurityAlert(
+                emailAddresses,
+                notification.title,
+                notification.message,
+                notification.metadata,
+              );
+              console.log('email send 2');
+
+              await this.notificationService.markEmailSent(notification.id);
+            }
+          }
+
+          // Mark notification as sent for this series
+          attempt.notificationSent = true;
+        }
+      }
+    } catch (error) {
+      this.logger.error('Failed to check password attempts threshold:', error);
+    }
+  }
+
+  // Reset failed attempts for a device (call when password is correct)
+  resetFailedPasswordAttempts(room: string, deviceId: string): void {
+    const key = `${room}:${deviceId}`;
+    this.failedPasswordAttempts.delete(key);
+    this.logger.log(`✅ Reset failed attempts for ${deviceId} in ${room}`);
+  }
+
+  // Cleanup old failed attempts (older than reset time)
+  private cleanupOldFailedAttempts(): void {
+    const now = new Date();
+    const resetTimeMinutes = 30; // Default, will be configurable
+
+    for (const [key, attempt] of this.failedPasswordAttempts.entries()) {
+      const ageMinutes =
+        (now.getTime() - attempt.firstAttemptTime.getTime()) / 1000 / 60;
+
+      if (ageMinutes > resetTimeMinutes) {
+        this.failedPasswordAttempts.delete(key);
+        this.logger.log(`🧹 Cleaned up old failed attempts for ${key}`);
+      }
     }
   }
 

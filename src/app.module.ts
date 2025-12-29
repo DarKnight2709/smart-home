@@ -26,6 +26,7 @@ import { KitchenModule } from './modules/kitchen/kitchen.module';
 import { OverviewModule } from './modules/overview/overview.module';
 import { SocketModule } from './modules/socket/socket.module';
 import { SettingModule } from './modules/setting/setting.module';
+import { NotificationModule } from './modules/notification/notification.module';
 // import { WebSocketModule } from './modules/websocket/websocket.module'; // Tạm thời tắt Socket.IO
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { SettingModule } from './modules/setting/setting.module';
     OverviewModule,
     SocketModule, 
     SettingModule,
+    NotificationModule,
   ],
   controllers: [
   ],

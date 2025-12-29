@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
@@ -6,7 +6,8 @@ import { MqttService } from '../mqtt/mqtt.service';
 import { DeviceService } from '../device/device.service';
 import { RoomSensorSnapshotEntity } from 'src/database/entities/sensor-data.entity';
 import { getDeviceStatistics } from 'src/shared/utils/getDeviceStatistics';
-import { DeviceType } from 'src/shared/enums/device.enum';
+import { DeviceType, DeviceStatus } from 'src/shared/enums/device.enum';
+import { Device } from 'src/database/entities/device.entity';
 
 @Injectable()
 export class KitchenService {
@@ -15,26 +16,98 @@ export class KitchenService {
     private readonly deviceService: DeviceService,
     @InjectRepository(RoomSensorSnapshotEntity)
     private readonly sensorSnapshot: Repository<RoomSensorSnapshotEntity>,
+    @InjectRepository(Device)
+    private readonly deviceRepository: Repository<Device>,
   ) {}
 
   async getSensorData() {
     await this.mqttService.getSensorData('kitchen');
   }
 
-  async controlLight(state: boolean) {
-    const isLightOnline = await this.deviceService.isDeviceTypeOnline('kitchen', DeviceType.LIGHT);
-    if (!isLightOnline) {
-      throw new BadRequestException('Không thể điều khiển đèn: Tất cả đèn nhà bếp đang offline');
+
+  async controlSpecificLight(deviceId: string, state: boolean) {
+    // Kiểm tra device có tồn tại và thuộc phòng kitchen không
+    const device = await this.deviceRepository.findOne({
+      where: { id: deviceId, location: 'kitchen', type: DeviceType.LIGHT },
+    });
+
+    if (!device) {
+      throw new NotFoundException(`Không tìm thấy đèn ${deviceId} trong nhà bếp`);
     }
-    await this.mqttService.controlLight('kitchen', state);
+
+    if (device.status === DeviceStatus.OFFLINE) {
+      throw new BadRequestException(`Đèn ${deviceId} đang offline`);
+    }
+
+    await this.mqttService.controlSpecificLight('kitchen', deviceId, state);
   }
 
-  async controlDoor(state: boolean) {
-    const isDoorOnline = await this.deviceService.isDeviceTypeOnline('kitchen', DeviceType.DOOR);
-    if (!isDoorOnline) {
-      throw new BadRequestException('Không thể điều khiển cửa: Tất cả cửa nhà bếp đang offline');
+
+
+  async controlAllLights(state: boolean) {
+    const lights = await this.deviceRepository.find({
+      where: { location: 'kitchen', type: DeviceType.LIGHT },
+    });
+
+    if (lights.length === 0) {
+      throw new NotFoundException('Không tìm thấy đèn nào trong nhà bếp');
     }
-    await this.mqttService.controlDoor('kitchen', state);
+
+    const onlineLights = lights.filter(light => light.status === DeviceStatus.ONLINE);
+    
+    if (onlineLights.length === 0) {
+      throw new BadRequestException('Tất cả đèn nhà bếp đang offline');
+    }
+
+    // Điều khiển từng đèn online
+    for (const light of onlineLights) {
+      await this.mqttService.controlSpecificLight('kitchen', light.id, state);
+    }
+  }
+
+  async controlAllWindows(state: boolean) {
+    const windows = await this.deviceRepository.find({
+      where: { location: 'kitchen', type: DeviceType.WINDOW },
+    });
+
+    if (windows.length === 0) {
+      throw new NotFoundException('Không tìm thấy cửa sổ nào trong nhà bếp');
+    }
+
+    const onlineWindows = windows.filter(window => window.status === DeviceStatus.ONLINE);
+    
+    if (onlineWindows.length === 0) {
+      throw new BadRequestException('Tất cả cửa sổ nhà bếp đang offline');
+    }
+
+    // Điều khiển từng cửa online
+    for (const window of onlineWindows) {
+      await this.mqttService.controlSpecificWindow('kitchen', window.id, state);
+    }
+  }
+
+
+
+  async controlSpecificWindow(deviceId: string, state: boolean) {
+    // Kiểm tra device có tồn tại và thuộc phòng kitchen không
+    const device = await this.deviceRepository.findOne({
+      where: { id: deviceId, location: 'kitchen', type: DeviceType.WINDOW },
+    });
+
+    if (!device) {
+      throw new NotFoundException(`Không tìm thấy cửa sổ ${deviceId} trong nhà bếp`);
+    }
+
+    if (device.status === DeviceStatus.OFFLINE) {
+      throw new BadRequestException(`Cửa sổ ${deviceId} đang offline`);
+    }
+
+    await this.mqttService.controlSpecificWindow('kitchen', deviceId, state);
+  }
+
+  async commandAuto(state: boolean) {
+    const message = state ? 'ON' : 'OFF';
+    await this.mqttService.sendAutoCommand('kitchen', message);
   }
 
   async getDetails() {
@@ -59,6 +132,28 @@ export class KitchenService {
       })),
       ...sensorSnapshot,
       ...deviceStatistics,
+    };
+  }
+
+  async updateDeviceName(deviceId: string, name: string) {
+    // Verify device exists in kitchen
+    const device = await this.deviceRepository.findOne({
+      where: { id: deviceId, location: 'kitchen' },
+    });
+
+    if (!device) {
+      throw new NotFoundException(`Không tìm thấy thiết bị ${deviceId} trong nhà bếp`);
+    }
+
+    const updated = await this.deviceService.updateDeviceName(deviceId, name);
+    return {
+      success: true,
+      message: 'Đã cập nhật tên thiết bị thành công',
+      device: {
+        id: updated.id,
+        name: updated.name,
+        type: updated.type,
+      }
     };
   }
 }

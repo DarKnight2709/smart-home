@@ -12,7 +12,11 @@ export class DeviceService {
   async upsert(dto: UpsertDeviceDto) {
     const existing = await this.deviceRepo.findOne({ where: { id: dto.id } })
     if (existing) {
-      return this.deviceRepo.save({ ...existing, ...dto })
+      return this.deviceRepo.save({ ...existing, 
+        location: dto.location ?? existing.location,
+        lastState: dto.lastState ?? existing.lastState,
+        status: dto.status ?? existing.status,
+       })
     }
     return this.deviceRepo.save(this.deviceRepo.create(dto))
   }
@@ -71,5 +75,16 @@ export class DeviceService {
       online,
       offline
     };
+  }
+
+  // Update device name
+  async updateDeviceName(deviceId: string, name: string): Promise<Device> {
+    const device = await this.deviceRepo.findOne({ where: { id: deviceId } });
+    if (!device) {
+      throw new Error(`Device with ID ${deviceId} not found`);
+    }
+    
+    device.name = name;
+    return await this.deviceRepo.save(device);
   }
 }

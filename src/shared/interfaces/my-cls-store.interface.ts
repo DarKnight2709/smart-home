@@ -1,4 +1,5 @@
 import { ClsStore } from 'nestjs-cls';
+import { Request } from 'express';
 import { AuditContext } from 'src/modules/audit-log/subscribers/audit-log.subscriber';
 
 
@@ -21,4 +22,14 @@ import { AuditContext } from 'src/modules/audit-log/subscribers/audit-log.subscr
 
 export interface MyClsStore extends ClsStore {
   auditContext: AuditContext;
+}
+
+// Interface cho Request có thông tin user sau khi authenticate
+export interface RequestWithUser extends Request {
+  user: {
+    id: string;
+    email: string;
+    roles?: string[];
+    permissions?: string[];
+  };
 }

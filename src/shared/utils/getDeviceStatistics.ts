@@ -9,9 +9,14 @@ export const getDeviceStatistics = (devices: Device[]) => {
   const lightsTotal = devices.filter((d) => d.type === DeviceType.LIGHT).length;
   // Cửa mở: type=DOOR, lastState='open'
   const doorsOpen = devices.filter(
-    (d) => d.type === DeviceType.DOOR && d.lastState === 'open',
+    (d) => d.type === DeviceType.DOOR && d.lastState === 'unlocked',
   ).length;
   const doorsTotal = devices.filter((d) => d.type === DeviceType.DOOR).length;
+  // Cửa sổ mở: type=WINDOW, lastState='open'
+  const windowsOpen = devices.filter(
+    (d) => d.type === DeviceType.WINDOW && d.lastState === 'opened',
+  ).length;
+  const windowsTotal = devices.filter((d) => d.type === DeviceType.WINDOW).length;
   // Thiết bị online
   const devicesOnline = devices.filter(
     (d) => d.status === DeviceStatus.ONLINE,
@@ -23,6 +28,8 @@ export const getDeviceStatistics = (devices: Device[]) => {
     lightsTotal,
     doorsOpen,
     doorsTotal,
+    windowsOpen,
+    windowsTotal,
     devicesOnline,
     devicesTotal
   }

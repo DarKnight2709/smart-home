@@ -1,23 +1,24 @@
 import {
   Controller,
   Get,
-  Post,
   Body,
   Patch,
   Param,
-  Delete,
-  HttpCode,
-  HttpStatus,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { ApiParam, ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { SettingService } from './setting.service';
 import { UpdateSettingDto } from './setting.dto';
-import { SettingEntity } from '../../database/entities/setting.entity';
+import { SecuritySettingEntity } from 'src/database/entities/security-setting.entity';
+import { UpdateSecuritySettingDto } from './security-setting.dto';
+import { SecuritySettingService } from './security-setting.service';
 
 @ApiTags('Settings')
 @Controller('settings')
 export class SettingController {
-  constructor(private readonly settingService: SettingService) {}
+  constructor(
+    private readonly settingService: SettingService,
+    private readonly securitySettingService: SecuritySettingService,
+  ) {}
 
 
   @Get()
@@ -42,6 +43,39 @@ export class SettingController {
     @Body() updateSettingDto: UpdateSettingDto,
   ) {
     return this.settingService.update( updateSettingDto);
+  }
+
+
+  @Get('security')
+  @ApiOperation({ summary: 'Lấy danh sách security settings' })
+  @ApiResponse({ status: 200, type: [SecuritySettingEntity] })
+  async findAllSecuritySettings(): Promise<SecuritySettingEntity[]> {
+    return await this.securitySettingService.findAll();
+  }
+
+  @Get('security/:key')
+  @ApiOperation({ summary: 'Lấy 1 security setting theo key' })
+  @ApiParam({ name: 'key', example: 'max_door_password_attempts' })
+  @ApiResponse({ status: 200, type: SecuritySettingEntity })
+  async findOneSecuritySetting(
+    @Param('key') key: string,
+  ): Promise<SecuritySettingEntity | null> {
+    return await this.securitySettingService.getSetting(key);
+  }
+
+  @Patch('security/:key')
+  @ApiOperation({ summary: 'Cập nhật security setting theo key' })
+  @ApiParam({ name: 'key', example: 'max_door_password_attempts' })
+  async updateSecuritySetting(
+    @Param('key') key: string,
+    @Body() body: UpdateSecuritySettingDto,
+  ): Promise<SecuritySettingEntity> {
+    return await this.securitySettingService.updateSetting(
+      key,
+      body.value,
+      body.description,
+      body.valueType,
+    );
   }
 
 

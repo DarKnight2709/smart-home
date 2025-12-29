@@ -24,3 +24,8 @@ export class UpsertDeviceDto {
   @IsEnum(DeviceStatus)
   status?: DeviceStatus;
 }
+
+export class UpdateDeviceNameDto {
+  @IsString()
+  name: string;
+}

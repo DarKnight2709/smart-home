@@ -41,7 +41,7 @@ export class EnvironmentValidation {
   CLIENT_URL: string;
 
   // Database
-    @IsString()
+  @IsString()
   DB_HOST: string;
 
   @IsNumber()
@@ -109,6 +109,23 @@ export class EnvironmentValidation {
 
   @IsString()
   MQTT_PASSWORD: string;
+
+  // email
+  // ================= EMAIL =================
+  @IsString()
+  @Transform(({ value }) => value || 'smtp.gmail.com')
+  EMAIL_HOST: string;
+
+  @IsNumber()
+  @Transform(({ value }) => Number(value) || 587)
+  EMAIL_PORT: number;
+
+  @IsString()
+  EMAIL_USER: string;
+
+  @IsString()
+  EMAIL_PASSWORD: string;
+
 }
 
 export function validateConfig(config: Record<string, unknown>) {

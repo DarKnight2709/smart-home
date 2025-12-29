@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { MqttService } from '../mqtt/mqtt.service';
-import { DeviceType } from 'src/shared/enums/device.enum';
+import { DeviceType, DeviceStatus } from 'src/shared/enums/device.enum';
 import { DeviceService } from '../device/device.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import { RoomSensorSnapshotEntity } from 'src/database/entities/sensor-data.entity';
@@ -8,6 +8,7 @@ import { Repository } from 'typeorm';
 import { getDeviceStatistics } from 'src/shared/utils/getDeviceStatistics';
 import { Device } from 'src/database/entities/device.entity';
 import { ChangeDoorPasswordDto } from './bedroom.dto';
+import { UpdateDeviceNameDto } from '../device/device.dto';
 
 @Injectable()
 export class BedroomService {
@@ -21,28 +22,93 @@ export class BedroomService {
   ) {}
 
 
-  async controlLight(state: boolean) {
-    const isLightOnline = await this.deviceService.isDeviceTypeOnline('bedroom', DeviceType.LIGHT);
-    if (!isLightOnline) {
-      throw new BadRequestException('Không thể điều khiển đèn: Tất cả đèn phòng ngủ đang offline');
+
+  async controlSpecificLight(deviceId: string, state: boolean) {
+    // Kiểm tra device có tồn tại và thuộc phòng bedroom không
+    const device = await this.deviceRepository.findOne({
+      where: { id: deviceId, location: 'bedroom', type: DeviceType.LIGHT },
+    });
+
+    if (!device) {
+      throw new NotFoundException(`Không tìm thấy đèn ${deviceId} trong phòng ngủ`);
     }
-    await this.mqttService.controlLight('bedroom', state);
+
+    if (device.status === DeviceStatus.OFFLINE) {
+      throw new BadRequestException(`Đèn ${deviceId} đang offline`);
+    }
+
+    await this.mqttService.controlSpecificLight('bedroom', deviceId, state);
   }
 
-  async controlDoor(state: boolean) {
-    const isDoorOnline = await this.deviceService.isDeviceTypeOnline('bedroom', DeviceType.DOOR);
-    if (!isDoorOnline) {
-      throw new BadRequestException('Không thể điều khiển cửa: Tất cả cửa phòng ngủ đang offline');
+
+  async controlAllLights(state: boolean) {
+    const lights = await this.deviceRepository.find({
+      where: { location: 'bedroom', type: DeviceType.LIGHT },
+    });
+
+    if (lights.length === 0) {
+      throw new NotFoundException('Không tìm thấy đèn nào trong phòng ngủ');
     }
-    await this.mqttService.controlDoor('bedroom', state);
+
+    const onlineLights = lights.filter(light => light.status === DeviceStatus.ONLINE);
+    
+    if (onlineLights.length === 0) {
+      throw new BadRequestException('Tất cả đèn phòng ngủ đang offline');
+    }
+
+    // Điều khiển từng đèn online
+    for (const light of onlineLights) {
+      await this.mqttService.controlSpecificLight('bedroom', light.id, state);
+    }
   }
 
-  async changeDoorPassword(changePasswordDto: ChangeDoorPasswordDto) {
+  async controlAllDoors(state: boolean) {
+    const doors = await this.deviceRepository.find({
+      where: { location: 'bedroom', type: DeviceType.DOOR },
+    });
+
+    if (doors.length === 0) {
+      throw new NotFoundException('Không tìm thấy cửa nào trong phòng ngủ');
+    }
+
+    const onlineDoors = doors.filter(door => door.status === DeviceStatus.ONLINE);
+    
+    if (onlineDoors.length === 0) {
+      throw new BadRequestException('Tất cả cửa phòng ngủ đang offline');
+    }
+
+    // Điều khiển từng cửa online
+    for (const door of onlineDoors) {
+      await this.mqttService.controlSpecificDoor('bedroom', door.id, state);
+    }
+  }
+
+
+
+  async controlSpecificDoor(deviceId: string, state: boolean) {
+    // Kiểm tra device có tồn tại và thuộc phòng bedroom không
+    const device = await this.deviceRepository.findOne({
+      where: { id: deviceId, location: 'bedroom', type: DeviceType.DOOR },
+    });
+
+    if (!device) {
+      throw new NotFoundException(`Không tìm thấy cửa ${deviceId} trong phòng ngủ`);
+    }
+
+    if (device.status === DeviceStatus.OFFLINE) {
+      throw new BadRequestException(`Cửa ${deviceId} đang offline`);
+    }
+
+    await this.mqttService.controlSpecificDoor('bedroom', deviceId, state);
+  }
+
+  async changeDoorPassword(deviceId: string, changePasswordDto: ChangeDoorPasswordDto) {
     const { oldPassword, newPassword } = changePasswordDto;
 
-    // Tìm door device trong bedroom
+    // Tìm door device theo deviceId trong bedroom
     const doorDevice = await this.deviceRepository.findOne({
       where: {
+        id: deviceId,
         location: 'bedroom',
         type: DeviceType.DOOR,
       },
@@ -53,7 +119,7 @@ export class BedroomService {
     });
 
     if (!doorDevice) {
-      throw new NotFoundException('Không tìm thấy cửa trong phòng ngủ');
+      throw new NotFoundException(`Không tìm thấy cửa ${deviceId} trong phòng ngủ`);
     }
 
     // Nếu chưa có password (lần đầu set password)
@@ -64,8 +130,8 @@ export class BedroomService {
         { password: newPassword },
       );
       // Gửi password mới đến wokwi qua MQTT
-      await this.mqttService.publishPassword('bedroom', newPassword);
-      return { success: true, message: 'Đã đặt mật khẩu mới cho cửa' };
+      await this.mqttService.publishPassword('bedroom', deviceId, newPassword);
+      return { success: true, message: `Đã đặt mật khẩu mới cho cửa ${deviceId}` };
     }
 
     // Kiểm tra mật khẩu cũ (plain text comparison)
@@ -80,9 +146,9 @@ export class BedroomService {
     );
 
     // Gửi password mới đến wokwi qua MQTT
-    await this.mqttService.publishPassword('bedroom', newPassword);
+    await this.mqttService.publishPassword('bedroom', deviceId, newPassword);
 
-    return { success: true, message: 'Đã đổi mật khẩu cửa thành công' };
+    return { success: true, message: `Đã đổi mật khẩu cửa ${deviceId} thành công` };
   }
 
   async getDetails() {
@@ -109,6 +175,28 @@ export class BedroomService {
       })),
       ...sensorSnapshot,
       ...deviceStatistics
+    };
+  }
+
+  async updateDeviceName(deviceId: string, name: string) {
+    // Verify device exists in bedroom
+    const device = await this.deviceRepository.findOne({
+      where: { id: deviceId, location: 'bedroom' },
+    });
+
+    if (!device) {
+      throw new NotFoundException(`Không tìm thấy thiết bị ${deviceId} trong phòng ngủ`);
+    }
+
+    const updated = await this.deviceService.updateDeviceName(deviceId, name);
+    return {
+      success: true,
+      message: 'Đã cập nhật tên thiết bị thành công',
+      device: {
+        id: updated.id,
+        name: updated.name,
+        type: updated.type,
+      }
     };
   }
 }

@@ -25,4 +25,11 @@ export class OverviewController {
     await this.overviewService.controlAllDoors(body.state);
     return { message: `All doors ${body.state}ed` };
   }
+
+  // API đóng/mở tất cả cửa sổ
+  @Patch('windows')
+  async controlAllWindows(@Body() body: OverviewStateDto) {
+    await this.overviewService.controlAllWindows(body.state);
+    return { message: `All windows ${body.state ? 'opened' : 'closed'}` };
+  }
 }
