@@ -1,6 +1,6 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { SecuritySettingEntity } from 'src/database/entities/security-setting.entity';
 import { SecuritySettingKey } from 'src/shared/enums/security-setting-key.enum';
 
@@ -66,6 +66,48 @@ export class SecuritySettingService implements OnModuleInit {
     }
 
     return await this.securitySettingRepo.save(setting);
+  }
+
+  async updateMany(
+    updates: Array<{
+      key: string;
+      value: string;
+      description?: string;
+      valueType?: SecuritySettingEntity['valueType'];
+    }>,
+  ): Promise<SecuritySettingEntity[]> {
+    if (updates.length === 0) {
+      return [];
+    }
+
+    const keys = updates.map((u) => u.key);
+    const existing = await this.securitySettingRepo.find({
+      where: { settingKey: In(keys) },
+    });
+    const existingByKey = new Map(existing.map((s) => [s.settingKey, s]));
+
+    const entities = updates.map((u) => {
+      const current = existingByKey.get(u.key);
+      if (!current) {
+        return this.securitySettingRepo.create({
+          settingKey: u.key,
+          settingValue: u.value,
+          description: u.description,
+          valueType: u.valueType ?? 'string',
+        });
+      }
+
+      current.settingValue = u.value;
+      if (u.description !== undefined) {
+        current.description = u.description;
+      }
+      if (u.valueType) {
+        current.valueType = u.valueType;
+      }
+      return current;
+    });
+
+    return await this.securitySettingRepo.save(entities);
   }
 
   async findAll(): Promise<SecuritySettingEntity[]> {

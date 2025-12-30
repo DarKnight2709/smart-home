@@ -3,12 +3,16 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { SettingEntity } from '../../database/entities/setting.entity';
 import { SettingResponseDto, UpdateSettingDto } from './setting.dto';
+import { UpdateHomeInfoDto } from './security-setting.dto';
+import { SecuritySettingService } from './security-setting.service';
+import { SecuritySettingKey } from 'src/shared/enums/security-setting-key.enum';
 
 @Injectable()
 export class SettingService {
   constructor(
     @InjectRepository(SettingEntity)
     private settingRepository: Repository<SettingEntity>,
+    private readonly securitySettingService: SecuritySettingService,
   ) {}
 
   async findAll(): Promise<SettingResponseDto[]> {
@@ -59,6 +63,38 @@ export class SettingService {
         updateSettingDto.gas.max,
       );
     }
+  }
+
+  async updateHomeInfo(dto: UpdateHomeInfoDto) {
+    await this.securitySettingService.updateMany([
+      {
+        key: SecuritySettingKey.HOME_NAME,
+        value: dto.homeName ?? '',
+        valueType: 'string',
+      },
+      {
+        key: SecuritySettingKey.HOME_ADDRESS,
+        value: dto.homeAddress ?? '',
+        valueType: 'string',
+      },
+    ]);
+
+    return { success: true };
+  }
+
+  async getHomeInfo(): Promise<{ homeName: string; homeAddress: string }> {
+    const [homeName, homeAddress] = await Promise.all([
+      this.securitySettingService.getSettingValue<string>(
+        SecuritySettingKey.HOME_NAME,
+        '',
+      ),
+      this.securitySettingService.getSettingValue<string>(
+        SecuritySettingKey.HOME_ADDRESS,
+        '',
+      ),
+    ]);
+
+    return { homeName, homeAddress };
   }
 
   async upsertSensorSetting(

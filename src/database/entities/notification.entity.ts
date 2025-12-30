@@ -1,7 +1,6 @@
 import { Entity, Column, ManyToOne, JoinColumn } from 'typeorm';
 import { AuditableEntity } from '../base/base.entity';
 import { ApiProperty } from '@nestjs/swagger';
-import { UserEntity } from './user.entity';
 import {
   NotificationSeverity,
   NotificationType,
@@ -72,20 +71,6 @@ export class NotificationEntity extends AuditableEntity {
     comment: 'Vị trí xảy ra sự kiện',
   })
   location?: string;
-
-  @ApiProperty({
-    description: 'ID thiết bị liên quan',
-    example: 'LV_Door_01',
-    required: false,
-  })
-  @Column({
-    name: 'device_id',
-    type: 'varchar',
-    length: 100,
-    nullable: true,
-    comment: 'ID thiết bị liên quan',
-  })
-  deviceId?: string;
 
   @ApiProperty({
     description: 'Dữ liệu bổ sung dạng JSON',

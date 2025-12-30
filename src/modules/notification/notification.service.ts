@@ -14,7 +14,6 @@ export interface CreateNotificationDto {
   message: string;
   severity?: NotificationSeverity;
   location?: string;
-  deviceId?: string;
   metadata?: Record<string, any>;
   userId?: string; // null = broadcast to all users
 }

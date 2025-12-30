@@ -1,6 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
-import { first } from 'rxjs';
 import { ConfigService } from 'src/shared/services/config.service';
 
 export interface SendEmailOptions {
@@ -78,9 +77,15 @@ export class EmailService {
     message: string,
     metadata?: Record<string, any>,
   ): Promise<boolean> {
-    const html = this.buildSecurityAlertHtml(title, message, metadata);
+    const html = this.buildAlertHtml({
+      headerTitle: '🚨 Cảnh báo bảo mật',
+      titleColor: '#dc3545',
+      metadataBorderColor: '#ffc107',
+      title,
+      message,
+      metadata,
+    });
 
-    console.log("email send")
     return await this.sendEmail({
       to,
       subject: `🚨 ${title}`,
@@ -89,11 +94,61 @@ export class EmailService {
     });
   }
 
-  private buildSecurityAlertHtml(
+  async sendSensorWarning(
+    to: string | string[],
     title: string,
     message: string,
     metadata?: Record<string, any>,
-  ): string {
+  ): Promise<boolean> {
+    const html = this.buildAlertHtml({
+      headerTitle: '⚠️ Cảnh báo cảm biến',
+      titleColor: '#b45309',
+      metadataBorderColor: '#f59e0b',
+      title,
+      message,
+      metadata,
+    });
+
+    return await this.sendEmail({
+      to,
+      subject: `⚠️ ${title}`,
+      html,
+      text: message,
+    });
+  }
+
+  async sendDeviceOfflineAlert(
+    to: string | string[],
+    title: string,
+    message: string,
+    metadata?: Record<string, any>,
+  ): Promise<boolean> {
+    const html = this.buildAlertHtml({
+      headerTitle: '📴 Thiết bị offline',
+      titleColor: '#1d4ed8',
+      metadataBorderColor: '#60a5fa',
+      title,
+      message,
+      metadata,
+    });
+
+    return await this.sendEmail({
+      to,
+      subject: `📴 ${title}`,
+      html,
+      text: message,
+    });
+  }
+
+  private buildAlertHtml(params: {
+    headerTitle: string;
+    titleColor: string;
+    metadataBorderColor: string;
+    title: string;
+    message: string;
+    metadata?: Record<string, any>;
+  }): string {
+    const { headerTitle, titleColor, metadataBorderColor, title, message, metadata } = params;
     const metadataHtml = metadata
       ? `
         <div style="margin-top: 20px; padding: 15px; background-color: #f8f9fa; border-left: 4px solid #ffc107;">
@@ -101,11 +156,15 @@ export class EmailService {
           ${Object.entries(metadata)
             .map(
               ([key, value]) =>
-                `<p style="margin: 5px 0;"><strong>${this.formatKey(key)}:</strong> ${this.formatValue(value)}</p>`,
+                `<p style="margin: 5px 0;"><strong>${this.formatKey(key)}:</strong> ${this.formatValue(value) ?? "Không có"}</p>`,
             )
             .join('')}
         </div>
       `
+      : '';
+
+    const resolvedMetadataHtml = metadataHtml
+      ? metadataHtml.replace('#ffc107', metadataBorderColor)
       : '';
 
     return `
@@ -118,14 +177,14 @@ export class EmailService {
         </head>
         <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
           <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 10px 10px 0 0; text-align: center;">
-            <h1 style="color: white; margin: 0; font-size: 24px;">🚨 Cảnh báo bảo mật</h1>
+            <h1 style="color: white; margin: 0; font-size: 24px;">${headerTitle}</h1>
           </div>
           
           <div style="background-color: #ffffff; padding: 30px; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 10px 10px;">
-            <h2 style="color: #dc3545; margin-top: 0;">${title}</h2>
+            <h2 style="color: ${titleColor}; margin-top: 0;">${title}</h2>
             <p style="font-size: 16px; color: #495057;">${message}</p>
             
-            ${metadataHtml}
+            ${resolvedMetadataHtml}
             
             <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0; font-size: 14px; color: #6c757d;">
               <p style="margin: 5px 0;">
@@ -153,6 +212,14 @@ export class EmailService {
       deviceId: 'Thiết bị',
       location: 'Vị trí',
       ipAddress: 'Địa chỉ IP',
+      roomStatus: 'Trạng thái phòng',
+      occurredAt: 'Thời gian xảy ra',
+      temperature: 'Nhiệt độ',
+      humidity: 'Độ ẩm',
+      gas: 'Gas',
+      gasWarningMessage: 'Cảnh báo gas',
+      temperatureWarningMessage: 'Cảnh báo nhiệt độ',
+      humidityWarningMessage: 'Cảnh báo độ ẩm',
     };
 
     return keyMap[key] || key.charAt(0).toUpperCase() + key.slice(1);
@@ -161,6 +228,14 @@ export class EmailService {
   private formatValue(value: any): string {
     if (value instanceof Date) {
       return value.toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
+    }
+    if (typeof value === 'string') {
+      const parsed = Date.parse(value);
+      if (!Number.isNaN(parsed)) {
+        return new Date(parsed).toLocaleString('vi-VN', {
+          timeZone: 'Asia/Ho_Chi_Minh',
+        });
+      }
     }
     return String(value);
   }

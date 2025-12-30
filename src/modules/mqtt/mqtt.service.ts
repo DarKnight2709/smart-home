@@ -49,6 +49,12 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
   // Track failed password attempts: key = "room:deviceId"
   private failedPasswordAttempts: Map<string, FailedAttempt> = new Map();
 
+  // Track last sensor warning to avoid spamming duplicate notifications
+  private lastSensorWarningKeyByRoom: Map<string, string> = new Map();
+
+  // Track last offline notification to avoid spamming
+  private lastOfflineNotifiedAtByRoom: Map<string, number> = new Map();
+
   constructor(
     private configService: ConfigService,
     private deviceService: DeviceService,
@@ -275,26 +281,11 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
         return;
     }
   }
-  // private async processSensorData(deviceId: string, sensorType: string, data: any) {
-  //   const location = data?.location // lấy phòng từ payload nếu có
-  //   await this.deviceService.upsert({
-  //     id: deviceId,
-  //     name: deviceId,
-  //     type: 'sensor',
-  //     capabilities: [sensorType],
-  //     location,
-  //   })
-  //   await this.deviceService.updateStatus(deviceId, 'online')
-  //   // TODO: lưu time-series (Phase 5) + broadcast WebSocket
-  // }
 
   private async handleAutoStatus(room: string, message: Buffer) {
     const payload = message.toString();
     this.logger.log(`🤖 Auto status from ${room}: ${payload}`);
 
-    // Xử lý payload auto, ví dụ lưu vào DB hoặc broadcast qua socket
-    // const data = JSON.parse(payload);
-    // sửa
     this.socketGateway.emitDeviceStatus(room, { auto: payload });
   }
   private async handleCurrentStatusTopic(room: string, message: Buffer) {
@@ -315,6 +306,55 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
 
     // update light and door lastState
     if (status === 'offline') {
+      // Create offline notification (once per room per 5 minutes)
+      if (this.notificationService) {
+        const nowMs = Date.now();
+        const lastNotifiedAtMs = this.lastOfflineNotifiedAtByRoom.get(room) || 0;
+        if (nowMs - lastNotifiedAtMs > 5 * 60 * 1000) {
+          try {
+            const notification = await this.notificationService.create({
+              type: NotificationType.DEVICE_OFFLINE,
+              title: `Thiết bị phòng ${room} đang offline`,
+              message: `Mất kết nối với thiết bị trong phòng ${room}. Một số chức năng có thể không điều khiển được cho đến khi thiết bị online lại.`,
+              severity: NotificationSeverity.HIGH,
+              location: room,
+              metadata: {
+                roomStatus: 'offline',
+                occurredAt: new Date().toISOString(),
+              },
+            });
+
+            const usersWithPermission =
+              await this.notificationService.getUsersWithNotificationPermission(
+                'GET',
+                '/notifications',
+              );
+
+            if (this.emailService && usersWithPermission.length > 0) {
+              const emailAddresses = usersWithPermission
+                .map((user: any) => user.email)
+                .filter((email: string) => email);
+
+              if (emailAddresses.length > 0) {
+                const ok = await this.emailService.sendDeviceOfflineAlert(
+                  emailAddresses,
+                  notification.title,
+                  notification.message,
+                  notification.metadata,
+                );
+                if (ok) {
+                  await this.notificationService.markEmailSent(notification.id);
+                }
+              }
+            }
+
+            this.lastOfflineNotifiedAtByRoom.set(room, nowMs);
+          } catch (error) {
+            this.logger.error('Failed to create device_offline notification', error);
+          }
+        }
+      }
+
       // Lấy tất cả thiết bị trong phòng
       const devices = await this.deviceRepository.find({
         where: {
@@ -507,6 +547,70 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
       }
     }
     console.log(data);
+
+    // Create sensor warning notification when needed (dedupe by warning key per room)
+    if (data.hasWarning && this.notificationService) {
+      const warningParts: string[] = [];
+      if (data['gasWarningMessage']) warningParts.push(data['gasWarningMessage']);
+      if (data['temperatureWarningMessage']) warningParts.push(data['temperatureWarningMessage']);
+      if (data['humidityWarningMessage']) warningParts.push(data['humidityWarningMessage']);
+
+      const warningKey = warningParts.join(' | ');
+      const lastWarningKey = this.lastSensorWarningKeyByRoom.get(room);
+
+      if (warningKey && warningKey !== lastWarningKey) {
+        try {
+          const severity = data['gasWarningMessage']
+            ? NotificationSeverity.CRITICAL
+            : NotificationSeverity.MEDIUM;
+
+          const notification = await this.notificationService.create({
+            type: NotificationType.SENSOR_WARNING,
+            title: `Cảnh báo cảm biến phòng ${room}`,
+            message: warningParts.join('. '),
+            severity,
+            location: room,
+            metadata: {
+              temperature: data.temperature,
+              humidity: data.humidity,
+              gas: data.gas,
+              gasWarningMessage: data['gasWarningMessage'],
+              temperatureWarningMessage: data['temperatureWarningMessage'],
+              humidityWarningMessage: data['humidityWarningMessage'],
+              occurredAt: new Date().toISOString(),
+            },
+          });
+
+          const usersWithPermission =
+            await this.notificationService.getUsersWithNotificationPermission(
+              'GET',
+              '/notifications',
+            );
+
+          if (this.emailService && usersWithPermission.length > 0) {
+            const emailAddresses = usersWithPermission
+              .map((user: any) => user.email)
+              .filter((email: string) => email);
+
+            if (emailAddresses.length > 0) {
+              const ok = await this.emailService.sendSensorWarning(
+                emailAddresses,
+                notification.title,
+                notification.message,
+                notification.metadata,
+              );
+              if (ok) {
+                await this.notificationService.markEmailSent(notification.id);
+              }
+            }
+          }
+
+          this.lastSensorWarningKeyByRoom.set(room, warningKey);
+        } catch (error) {
+          this.logger.error('Failed to create sensor_warning notification', error);
+        }
+      }
+    }
 
     this.socketGateway.emitSensor(room, data);
     // lưu vào DB nếu cần
@@ -981,7 +1085,6 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
             message: `Đã nhập sai mật khẩu ${roomDevice?.name} tại ${room} ${attempt.count} lần liên tiếp. Có khả năng ai đó đang cố gắng truy cập trái phép.`,
             severity: NotificationSeverity.CRITICAL,
             location: room,
-            deviceId: deviceId,
             metadata: {
               failedAttempts: attempt.count,
               firstAttemptTime: attempt.firstAttemptTime,

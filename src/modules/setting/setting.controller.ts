@@ -9,7 +9,7 @@ import { ApiParam, ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { SettingService } from './setting.service';
 import { UpdateSettingDto } from './setting.dto';
 import { SecuritySettingEntity } from 'src/database/entities/security-setting.entity';
-import { UpdateSecuritySettingDto } from './security-setting.dto';
+import { UpdateHomeInfoDto, UpdateSecuritySettingDto } from './security-setting.dto';
 import { SecuritySettingService } from './security-setting.service';
 
 @ApiTags('Settings')
@@ -51,6 +51,18 @@ export class SettingController {
   @ApiResponse({ status: 200, type: [SecuritySettingEntity] })
   async findAllSecuritySettings(): Promise<SecuritySettingEntity[]> {
     return await this.securitySettingService.findAll();
+  }
+
+  @Get('home-info')
+  @ApiOperation({ summary: 'Lấy thông tin nhà (home_name + home_address)' })
+  async getHomeInfo() {
+    return await this.settingService.getHomeInfo();
+  }
+
+  @Patch('home-info')
+  @ApiOperation({ summary: 'Cập nhật thông tin nhà (home_name + home_address)' })
+  async updateHomeInfo(@Body() body: UpdateHomeInfoDto) {
+    return await this.settingService.updateHomeInfo(body);
   }
 
   @Get('security/:key')
