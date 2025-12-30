@@ -70,7 +70,6 @@ export class NotificationService {
   async findOne(id: string): Promise<NotificationEntity> {
     const notification = await this.notificationRepo.findOne({
       where: { id },
-      relations: ['user'],
     });
 
     if (!notification) {
@@ -112,7 +111,7 @@ export class NotificationService {
     await this.notificationRepo.remove(notification);
   }
 
-  async getUnreadCount(userId?: string): Promise<number> {
+  async getUnreadCount(): Promise<number> {
     const query = this.notificationRepo
       .createQueryBuilder('notification')
       .where('notification.isRead = :isRead', { isRead: false });

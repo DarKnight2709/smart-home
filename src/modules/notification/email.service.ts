@@ -156,7 +156,7 @@ export class EmailService {
           ${Object.entries(metadata)
             .map(
               ([key, value]) =>
-                `<p style="margin: 5px 0;"><strong>${this.formatKey(key)}:</strong> ${this.formatValue(value) ?? "Không có"}</p>`,
+                `<p style="margin: 5px 0;"><strong>${this.formatKey(key)}:</strong> ${this.formatValue(value || '') || "Không có"}</p>`,
             )
             .join('')}
         </div>
@@ -214,8 +214,8 @@ export class EmailService {
       ipAddress: 'Địa chỉ IP',
       roomStatus: 'Trạng thái phòng',
       occurredAt: 'Thời gian xảy ra',
-      temperature: 'Nhiệt độ',
-      humidity: 'Độ ẩm',
+      temperature: 'Nhiệt độ (°C)',
+      humidity: 'Độ ẩm (%)',
       gas: 'Gas',
       gasWarningMessage: 'Cảnh báo gas',
       temperatureWarningMessage: 'Cảnh báo nhiệt độ',
