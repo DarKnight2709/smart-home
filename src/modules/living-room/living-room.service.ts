@@ -202,4 +202,12 @@ export class LivingRoomService {
       }
     };
   }
+
+  async deleteDevice(deviceId: string) {
+    await this.deviceService.deleteDeviceInLocation('living-room', deviceId);
+    return {
+      success: true,
+      message: `Đã xóa thiết bị ${deviceId} khỏi phòng khách`,
+    };
+  }
 }

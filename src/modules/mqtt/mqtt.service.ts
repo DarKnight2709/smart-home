@@ -24,13 +24,6 @@ import {
 } from 'src/shared/enums/notification.enum';
 import { SecuritySettingKey } from 'src/shared/enums/security-setting-key.enum';
 
-interface SensorData {
-  value: number;
-  timestamp: number;
-  deviceId: string;
-  sensorType: string;
-}
-
 // Track failed password attempts
 interface FailedAttempt {
   count: number;
@@ -292,24 +285,22 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
     const status = message.toString(); // online | offline
     console.log('status: ', status);
 
-    await this.deviceRepository.update(
-      { location: room },
-      {
-        status:
-          status === 'online' ? DeviceStatus.ONLINE : DeviceStatus.OFFLINE,
-      },
-    );
-
-    this.socketGateway.emitDeviceStatus(room, {
-      status: status === 'online' ? DeviceStatus.ONLINE : DeviceStatus.OFFLINE,
-    });
-
-    // update light and door lastState
     if (status === 'offline') {
+      await this.deviceRepository.update(
+        { location: room },
+        {
+          status: DeviceStatus.OFFLINE,
+        },
+      );
+      this.socketGateway.emitDeviceStatus(room, {
+        status: DeviceStatus.OFFLINE,
+      });
+
       // Create offline notification (once per room per 5 minutes)
       if (this.notificationService) {
         const nowMs = Date.now();
-        const lastNotifiedAtMs = this.lastOfflineNotifiedAtByRoom.get(room) || 0;
+        const lastNotifiedAtMs =
+          this.lastOfflineNotifiedAtByRoom.get(room) || 0;
         if (nowMs - lastNotifiedAtMs > 5 * 60 * 1000) {
           try {
             const notification = await this.notificationService.create({
@@ -350,7 +341,10 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
 
             this.lastOfflineNotifiedAtByRoom.set(room, nowMs);
           } catch (error) {
-            this.logger.error('Failed to create device_offline notification', error);
+            this.logger.error(
+              'Failed to create device_offline notification',
+              error,
+            );
           }
         }
       }
@@ -416,6 +410,10 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
         location: room,
         status: DeviceStatus.ONLINE,
       });
+      this.socketGateway.emitDeviceStatus(room, {
+        id: payload.id,
+        status: DeviceStatus.ONLINE,
+      });
 
       this.logger.log(`📟 Sensor registered [${room}] → ${payload.id}`);
     } catch (err) {
@@ -469,6 +467,12 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
     console.log(
       'Updated device status in DB' + room + ' ' + deviceId + ' ' + state,
     );
+
+    this.socketGateway.emitDeviceStatus(room, {
+      id: deviceId,
+      lastState: state,
+      status: DeviceStatus.ONLINE,
+    });
 
     const devices = await this.deviceService.findAll();
     const eachRoomDevices = devices.filter((d) => d.location === room);
@@ -551,9 +555,12 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
     // Create sensor warning notification when needed (dedupe by warning key per room)
     if (data.hasWarning && this.notificationService) {
       const warningParts: string[] = [];
-      if (data['gasWarningMessage']) warningParts.push(data['gasWarningMessage']);
-      if (data['temperatureWarningMessage']) warningParts.push(data['temperatureWarningMessage']);
-      if (data['humidityWarningMessage']) warningParts.push(data['humidityWarningMessage']);
+      if (data['gasWarningMessage'])
+        warningParts.push(data['gasWarningMessage']);
+      if (data['temperatureWarningMessage'])
+        warningParts.push(data['temperatureWarningMessage']);
+      if (data['humidityWarningMessage'])
+        warningParts.push(data['humidityWarningMessage']);
 
       const warningKey = warningParts.join(' | ');
       const lastWarningKey = this.lastSensorWarningKeyByRoom.get(room);
@@ -607,7 +614,10 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
 
           this.lastSensorWarningKeyByRoom.set(room, warningKey);
         } catch (error) {
-          this.logger.error('Failed to create sensor_warning notification', error);
+          this.logger.error(
+            'Failed to create sensor_warning notification',
+            error,
+          );
         }
       }
     }
@@ -657,58 +667,6 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
     this.logger.log(`📝 Registered handler for topic: ${topic}`);
   }
 
-  // Publish command to device
-  // async publishCommand(room: string, device: string, payload: any) {
-  //   // Kiểm tra kết nối trước khi publish
-  //   if (!this.client || !this.client.connected) {
-  //     const error = new Error(
-  //       `MQTT client is not connected. Broker: ${this.brokerUrl}`,
-  //     );
-  //     this.logger.error(`❌ Cannot publish command: ${error.message}`);
-  //     return Promise.reject(error);
-  //   }
-
-  //   // // kiểm tra thiết bị xem có offline không?
-  //   // const deviceEntity = await this.deviceRepository.findOne({
-  //   //   where: {
-  //   //     location: room,
-  //   //     type: device === 'light' ? DeviceType.LIGHT : DeviceType.DOOR,
-  //   //   },
-  //   // });
-  //   // if (!deviceEntity || deviceEntity.status === DeviceStatus.OFFLINE) {
-  //   //   const error = new Error(`Device not found in ${room}`);
-  //   //   this.logger.error(`❌ Cannot publish command: ${error.message}`);
-  //   //   return Promise.reject(error);
-  //   // }
-
-  //   // sửa thêm đèn với id
-  //   const topic = `${room}/command/${device}`;
-  //   const message = payload;
-
-  //   this.logger.debug(
-  //     `📤 Attempting to publish to ${topic} with payload:`,
-  //     payload,
-  //   );
-
-  //   return new Promise<void>((resolve, reject) => {
-  //     this.client.publish(
-  //       topic,
-  //       message,
-  //       { qos: 1, retain: false },
-  //       (error) => {
-  //         if (error) {
-  //           this.logger.error(`❌ Failed to publish to ${topic}:`, error);
-  //           this.logger.error(`   Error details: ${error.message}`);
-  //           reject(error);
-  //         } else {
-  //           this.logger.log(`✅ Published command to ${topic}:`, payload);
-  //           resolve();
-  //         }
-  //       },
-  //     );
-  //   });
-  // }
-
   async getSensorData(room: string) {
     const topic = `${room}/command/get-sensor-data`;
     const message = JSON.stringify({ command: 'get-sensor-data' });
@@ -731,11 +689,6 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  // Control light
-  // sửa thêm id
-  // async controlLight(room: string, state: boolean) {
-  //   await this.publishCommand(room, 'light', state ? 'ON' : 'OFF');
-  // }
 
   async sendAutoCommand(room: string, command: any) {
     if (!this.client || !this.client.connected) {
@@ -865,10 +818,7 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  // Control door
-  // async controlDoor(room: string, state: boolean) {
-  //   await this.publishCommand(room, 'door', state ? 'UNLOCK' : 'LOCK');
-  // }
+
 
   // Publish password to wokwi (when password changed)
   async publishPassword(room: string, deviceId: string, password: string) {

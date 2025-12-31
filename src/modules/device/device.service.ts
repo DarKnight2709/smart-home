@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common'
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
 import { Repository } from 'typeorm'
 import { Device } from '../../database/entities/device.entity'
@@ -11,6 +11,7 @@ export class DeviceService {
 
   async upsert(dto: UpsertDeviceDto) {
     const existing = await this.deviceRepo.findOne({ where: { id: dto.id } })
+    console.log("Existing device:", dto.id);
     if (existing) {
       return this.deviceRepo.save({ ...existing, 
         location: dto.location ?? existing.location,
@@ -86,5 +87,27 @@ export class DeviceService {
     
     device.name = name;
     return await this.deviceRepo.save(device);
+  }
+
+  async deleteDeviceInLocation(location: string, deviceId: string) {
+    const device = await this.deviceRepo.findOne({
+      where: { id: deviceId, location },
+      select: ['id', 'location', 'status'],
+    })
+
+    if (!device) {
+      throw new NotFoundException(
+        `Không tìm thấy thiết bị ${deviceId} trong phòng ${location}`,
+      )
+    }
+
+    if (device.status !== DeviceStatus.OFFLINE) {
+      throw new BadRequestException(
+        `Chỉ có thể xóa thiết bị offline (${deviceId})`,
+      )
+    }
+
+    await this.deviceRepo.delete({ id: deviceId, location })
+    return { success: true }
   }
 }

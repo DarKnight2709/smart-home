@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, Patch } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Patch, Delete } from '@nestjs/common';
 import { BedroomService } from './bedroom.service';
 import { BedRoomStateDto, ChangeDoorPasswordDto } from './bedroom.dto';
 import { UpdateDeviceNameDto } from '../device/device.dto';
@@ -45,5 +45,10 @@ export class BedroomController {
   @Patch('device/:deviceId/name')
   async updateDeviceName(@Param('deviceId') deviceId: string, @Body() body: UpdateDeviceNameDto) {
     return await this.bedroomService.updateDeviceName(deviceId, body.name);
+  }
+
+  @Delete('device/:deviceId')
+  async deleteDevice(@Param('deviceId') deviceId: string) {
+    return await this.bedroomService.deleteDevice(deviceId);
   }
 }

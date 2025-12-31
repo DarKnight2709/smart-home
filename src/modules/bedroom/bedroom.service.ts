@@ -199,4 +199,12 @@ export class BedroomService {
       }
     };
   }
+
+  async deleteDevice(deviceId: string) {
+    await this.deviceService.deleteDeviceInLocation('bedroom', deviceId);
+    return {
+      success: true,
+      message: `Đã xóa thiết bị ${deviceId} khỏi phòng ngủ`,
+    };
+  }
 }

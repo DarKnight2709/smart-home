@@ -156,4 +156,12 @@ export class KitchenService {
       }
     };
   }
+
+  async deleteDevice(deviceId: string) {
+    await this.deviceService.deleteDeviceInLocation('kitchen', deviceId);
+    return {
+      success: true,
+      message: `Đã xóa thiết bị ${deviceId} khỏi nhà bếp`,
+    };
+  }
 }
