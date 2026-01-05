@@ -1,8 +1,4 @@
-import {
-  Inject,
-  Injectable,
-  Logger,
-} from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ClsService } from 'nestjs-cls';
 import { AuditableEntity } from 'src/database/base/base.entity';
@@ -81,7 +77,7 @@ export const FIELD_NAME_MAPPING = Object.freeze({
   method: 'Phương thức HTTP',
   module: 'Module',
   token: 'Token',
-  userId: 'Nhân viên',
+  userId: 'Người dùng',
   expiresAt: 'Thời gian hết hạn',
   isRevoked: 'Đã bị thu hồi',
   ipAddress: 'Địa chỉ IP',
@@ -170,12 +166,26 @@ export const VALUE_MAPPING = Object.freeze({
     kitchen: 'Nhà bếp',
     bedroom: 'Phòng ngủ',
   },
+
+  // SettingEntity
+  sensorType: {
+    temperature: 'Nhiệt độ',
+    humidity: 'Độ ẩm',
+    gas: 'Khí gas',
+    light: 'Ánh sáng',
+    light_level: 'Ánh sáng',
+  },
+
+  // SecuritySettingEntity
+  settingKey: {
+    max_door_password_attempts: 'Số lần nhập sai mật khẩu tối đa',
+    password_attempt_reset_time_minutes: 'Thời gian reset số lần nhập sai (phút)',
+    home_name: 'Tên nhà',
+    home_address: 'Địa chỉ nhà',
+  },
 } as const);
 
-const EXCLUDED_ENTITIES = new Set([
-  'AuditLogEntity',
-  'RefreshTokenEntity',
-]);
+const EXCLUDED_ENTITIES = new Set(['AuditLogEntity', 'RefreshTokenEntity']);
 
 const SENSITIVE_FIELDS = new Set([
   'password',
@@ -214,12 +224,13 @@ const extractEntityId = (entity: any): string => {
 
 const sanitizeObject = (obj: any): any => {
   if (!obj || typeof obj !== 'object') return obj;
-  if (Array.isArray(obj)) return obj.map(item => sanitizeObject(item));
+  if (Array.isArray(obj)) return obj.map((item) => sanitizeObject(item));
 
   const sanitized: any = {};
   for (const [key, value] of Object.entries(obj)) {
     if (SENSITIVE_FIELDS.has(key)) sanitized[key] = '***ĐÃ ẨN***';
-    else if (value && typeof value === 'object' && !(value instanceof Date)) sanitized[key] = sanitizeObject(value);
+    else if (value && typeof value === 'object' && !(value instanceof Date))
+      sanitized[key] = sanitizeObject(value);
     else sanitized[key] = value;
   }
   return sanitized;
@@ -237,15 +248,44 @@ const getChangedFields = (oldValues: any, newValues: any): string[] => {
     if (EXCLUDE_FIELDS.has(key)) continue;
     const oldVal = oldValues?.[key];
     const newVal = newValues?.[key];
-    if (JSON.stringify(oldVal) !== JSON.stringify(newVal)) changedFields.push(key);
+    if (JSON.stringify(oldVal) !== JSON.stringify(newVal))
+      changedFields.push(key);
   }
   return changedFields;
+};
+
+const pickKeys = (obj: any, keys: string[]): Record<string, any> => {
+  const out: Record<string, any> = {};
+  if (!obj || typeof obj !== 'object') return out;
+  for (const key of keys) {
+    if (EXCLUDE_FIELDS.has(key)) continue;
+    out[key] = (obj as any)[key];
+  }
+  return out;
+};
+
+const getChangedFieldsByKeys = (
+  oldValues: any,
+  newValues: any,
+  keys: string[],
+): string[] => {
+  if (!oldValues || !newValues) return [];
+  const changed: string[] = [];
+  for (const key of keys) {
+    if (EXCLUDE_FIELDS.has(key)) continue;
+    const oldVal = oldValues?.[key];
+    const newVal = newValues?.[key];
+    if (JSON.stringify(oldVal) !== JSON.stringify(newVal)) changed.push(key);
+  }
+  return changed;
 };
 
 const generateDescription = (
   action: AuditAction,
   entityName: string,
   opts?: {
+    entityNameRaw?: string;
+    entityRef?: any;
     changedFields?: string[];
     oldValues?: any;
     newValues?: any;
@@ -253,19 +293,19 @@ const generateDescription = (
     user?: IRequest['user'];
   },
 ): string => {
-  const user = opts?.user;
-  const userInfo = user ? ` bởi ${user.fullName || user.username}` : '';
 
   const formatValue = (field: string | undefined, value: any): string => {
-    if (_.isNil(value)) return '∅';
+    if (_.isNil(value)) return 'Không có';
     if (value instanceof Date) return value.toISOString();
 
     const valueType = typeof value;
     if (valueType === 'boolean') {
       if (field === 'isRead') return value ? 'Đã đọc' : 'Chưa đọc';
-      if (field === 'emailSent') return value ? 'Đã gửi email' : 'Chưa gửi email';
+      if (field === 'emailSent')
+        return value ? 'Đã gửi email' : 'Chưa gửi email';
       if (field === 'isActive') return value ? 'Hoạt động' : 'Không hoạt động';
-      if (field === 'isSystemRole') return value ? 'Vai trò hệ thống' : 'Vai trò thường';
+      if (field === 'isSystemRole')
+        return value ? 'Vai trò hệ thống' : 'Vai trò thường';
       return value ? 'Có' : 'Không';
     }
 
@@ -274,7 +314,9 @@ const generateDescription = (
 
       // Map enum-ish values to Vietnamese when possible
       if (field && trimmed) {
-        const mapper = (VALUE_MAPPING as any)[field] as Record<string, string> | undefined;
+        const mapper = (VALUE_MAPPING as any)[field] as
+          | Record<string, string>
+          | undefined;
         const mapped = mapper?.[trimmed];
         if (mapped) return mapped;
       }
@@ -313,6 +355,35 @@ const generateDescription = (
     return `; Chi tiết: ${parts.join(', ')}${more}`;
   };
 
+  const buildEntityHint = (): string => {
+    const raw = opts?.entityNameRaw;
+    if (raw === 'SecuritySettingEntity') {
+      const settingKey =
+        opts?.newValues?.settingKey ??
+        opts?.oldValues?.settingKey ??
+        opts?.entityRef?.settingKey;
+      if (!settingKey) return '';
+      const label =
+        FIELD_NAME_MAPPING.settingKey || 'settingKey';
+      return `; ${label}: ${formatValue('settingKey', settingKey)}`;
+    }
+
+    if (raw === 'SettingEntity') {
+      const sensorType =
+        opts?.newValues?.sensorType ??
+        opts?.oldValues?.sensorType ??
+        opts?.entityRef?.sensorType;
+      if (!sensorType) return '';
+      const label =
+        FIELD_NAME_MAPPING.sensorType || 'sensorType';
+      return `; ${label}: ${formatValue('sensorType', sensorType)}`;
+    }
+
+    return '';
+  };
+
+  const entityHint = buildEntityHint();
+
   const buildCreateSummary = (): string => {
     const newValues = opts?.newValues;
     if (!newValues || typeof newValues !== 'object') return '';
@@ -341,24 +412,17 @@ const generateDescription = (
     return `; Dữ liệu: ${entries.join(', ')}`;
   };
   const actionMap: Record<AuditAction, string> = {
-    [AuditAction.CREATE]: `Thêm mới ${entityName}${userInfo}${buildCreateSummary()}`,
-    [AuditAction.UPDATE]: `Cập nhật ${entityName}${userInfo}${opts?.changedFields?.length ? ` (${opts.changedFields.length} trường)` : ''}${buildUpdateDetail()}`,
-    [AuditAction.DELETE]: `Xóa ${entityName}${userInfo}${opts?.entityId ? ` (ID: ${opts.entityId})` : ''}`,
-    [AuditAction.SOFT_DELETE]: `Xóa mềm ${entityName}${userInfo}${opts?.entityId ? ` (ID: ${opts.entityId})` : ''}`,
-    [AuditAction.RESTORE]: `Khôi phục ${entityName}${userInfo}${opts?.entityId ? ` (ID: ${opts.entityId})` : ''}`,
-    [AuditAction.LOGIN]: `Đăng nhập hệ thống${userInfo}`,
-    [AuditAction.LOGOUT]: `Đăng xuất hệ thống${userInfo}`,
-    [AuditAction.FAILED_LOGIN]: `Đăng nhập thất bại${userInfo}`,
-    [AuditAction.PASSWORD_CHANGE]: `Thay đổi mật khẩu${userInfo}`,
-    [AuditAction.PERMISSION_CHANGE]: `Cập nhật quyền hạn${userInfo}`,
-    [AuditAction.EXPORT]: `Xuất dữ liệu ${entityName}${userInfo}`,
-    [AuditAction.IMPORT]: `Nhập dữ liệu ${entityName}${userInfo}`,
-    [AuditAction.VIEW]: `Xem thông tin ${entityName}${userInfo}`,
-    [AuditAction.DOWNLOAD]: `Tải xuống ${entityName}${userInfo}`,
-    [AuditAction.UPLOAD]: `Tải lên ${entityName}${userInfo}`,
-    [AuditAction.CUSTOM]: `Thao tác tùy chỉnh trên ${entityName}${userInfo}`,
+    [AuditAction.CREATE]: `Thêm mới ${entityName}${entityHint}${buildCreateSummary()}`,
+    [AuditAction.UPDATE]: `Cập nhật ${entityName}${opts?.changedFields?.length ? ` (${opts.changedFields.length} trường)` : ''}${entityHint}${buildUpdateDetail()}`,
+    [AuditAction.DELETE]: `Xóa ${entityName}${entityHint}${opts?.entityId ? ` (ID: ${opts.entityId})` : ''}`,
+    [AuditAction.SOFT_DELETE]: `Xóa mềm ${entityName}${entityHint}${opts?.entityId ? ` (ID: ${opts.entityId})` : ''}`,
+    [AuditAction.RESTORE]: `Khôi phục ${entityName}${entityHint}${opts?.entityId ? ` (ID: ${opts.entityId})` : ''}`,
+    [AuditAction.PERMISSION_CHANGE]: `Cập nhật quyền hạn`,
+    [AuditAction.CUSTOM]: `Thao tác tùy chỉnh trên ${entityName}${entityHint}`,
   };
-  return actionMap[action] || `Thực hiện ${action} trên ${entityName}${userInfo}`;
+  return (
+    actionMap[action] || `Thực hiện ${action} trên ${entityName}`
+  );
 };
 
 @Injectable()
@@ -386,19 +450,43 @@ export class AuditLogSubscriber implements EntitySubscriberInterface {
     await this.handleAuditEvent({
       action: AuditAction.CREATE,
       entity: event.entity,
+      entityName: event.metadata?.name,
       newValues: event.entity,
     });
   }
 
   async afterUpdate(event: UpdateEvent<AuditableEntity>) {
     if (!event.entity) return;
-    const changedFields = getChangedFields(event.databaseEntity, event.entity);
-    if (changedFields.length === 0) return;
+
+    // TypeORM update events can be tricky:
+    // - event.entity can be partial
+    // - databaseEntity may not contain relations
+    // If we diff raw objects, we can get false positives (old missing field, new has field).
+    // Use updatedColumns (real DB columns) and diff against a merged "new" snapshot.
+    const dbEntity = (event.databaseEntity ?? {}) as any;
+    const mergedNew = { ...dbEntity, ...(event.entity as any) };
+
+    const updatedColumns = (event.updatedColumns ?? [])
+      .map((c: any) => c.propertyName as string)
+      .filter(Boolean);
+
+    const columnKeys = (event.metadata?.columns ?? [])
+      .map((c: any) => c.propertyName as string)
+      .filter(Boolean);
+
+    const candidateKeys = updatedColumns.length ? updatedColumns : columnKeys;
+    const changedFields = getChangedFieldsByKeys(dbEntity, mergedNew, candidateKeys);
+    if (!changedFields.length) return;
+
+    const oldValues = pickKeys(dbEntity, changedFields);
+    const newValues = pickKeys(mergedNew, changedFields);
     await this.handleAuditEvent({
       action: AuditAction.UPDATE,
       entity: event.entity,
-      oldValues: event.databaseEntity,
-      newValues: event.entity,
+      entityName: event.metadata?.name,
+      entityRef: mergedNew,
+      oldValues,
+      newValues,
       changedFields,
     });
   }
@@ -407,6 +495,7 @@ export class AuditLogSubscriber implements EntitySubscriberInterface {
     await this.handleAuditEvent({
       action: AuditAction.DELETE,
       entity: event.entity,
+      entityName: event.metadata?.name,
       oldValues: event.entity,
     });
   }
@@ -415,6 +504,7 @@ export class AuditLogSubscriber implements EntitySubscriberInterface {
     await this.handleAuditEvent({
       action: AuditAction.SOFT_DELETE,
       entity: event.entity,
+      entityName: event.metadata?.name,
       oldValues: event.entity,
       changedFields: ['deletedAt'],
     });
@@ -424,6 +514,7 @@ export class AuditLogSubscriber implements EntitySubscriberInterface {
     await this.handleAuditEvent({
       action: AuditAction.RESTORE,
       entity: event.entity,
+      entityName: event.metadata?.name,
       newValues: event.entity,
       changedFields: ['deletedAt'],
     });
@@ -432,6 +523,8 @@ export class AuditLogSubscriber implements EntitySubscriberInterface {
   private async handleAuditEvent(params: {
     action: AuditAction;
     entity: any;
+    entityName?: string;
+    entityRef?: any;
     oldValues?: any;
     newValues?: any;
     changedFields?: string[];
@@ -440,7 +533,12 @@ export class AuditLogSubscriber implements EntitySubscriberInterface {
       if (this.auditConfig.enabled === false) return;
       if (!params.entity) return;
 
-      const entityName = normalizeEntityName(params.entity.constructor);
+      // TypeORM can provide a plain object for event.entity (e.g. repository.update/query builder),
+      // whose constructor.name is just "Object". Prefer metadata entity name when available.
+      const entityName =
+        params.entityName && params.entityName !== 'Object'
+          ? params.entityName
+          : normalizeEntityName(params.entity.constructor);
       if (isEntityExcluded(entityName)) return;
 
       // NOTE:
@@ -449,8 +547,9 @@ export class AuditLogSubscriber implements EntitySubscriberInterface {
       const entityNameVi =
         ENTITY_NAME_MAPPING[entityName as keyof typeof ENTITY_NAME_MAPPING] ||
         entityName;
-      const changedFieldsVi = (params.changedFields || []).map((field) =>
-        FIELD_NAME_MAPPING[field as keyof typeof FIELD_NAME_MAPPING] || field,
+      const changedFieldsVi = (params.changedFields || []).map(
+        (field) =>
+          FIELD_NAME_MAPPING[field as keyof typeof FIELD_NAME_MAPPING] || field,
       );
 
       const entityId = extractEntityId(params.entity);
@@ -463,6 +562,9 @@ export class AuditLogSubscriber implements EntitySubscriberInterface {
         context.user?.id ||
         params.entity?.updatedById ||
         params.entity?.createdById;
+
+      // Nếu không xác định được người thực hiện -> coi là hệ thống/background và không log.
+      if (!fallbackUserId) return;
 
       const sanitizedOldValues = config.trackOldValues
         ? sanitizeObject(params.oldValues)
@@ -490,17 +592,15 @@ export class AuditLogSubscriber implements EntitySubscriberInterface {
           requestId: context.requestId,
           timestamp: new Date().toISOString(),
         },
-        description: generateDescription(
-          params.action,
-          entityNameVi,
-          {
-            changedFields: params.changedFields || [],
-            oldValues: sanitizedOldValues,
-            newValues: sanitizedNewValues,
-            entityId,
-            user: context.user,
-          },
-        ),
+        description: generateDescription(params.action, entityNameVi, {
+          entityNameRaw: entityName,
+          entityRef: params.entityRef ?? params.entity,
+          changedFields: params.changedFields || [],
+          oldValues: sanitizedOldValues,
+          newValues: sanitizedNewValues,
+          entityId,
+          user: context.user,
+        }),
       });
 
       setImmediate(async () => {
@@ -526,7 +626,9 @@ export class AuditLogSubscriber implements EntitySubscriberInterface {
     }
   }
 
-  private getAuditConfig(): Required<Pick<AuditConfig, 'enabled' | 'trackOldValues' | 'trackNewValues'>> {
+  private getAuditConfig(): Required<
+    Pick<AuditConfig, 'enabled' | 'trackOldValues' | 'trackNewValues'>
+  > {
     return {
       enabled: this.auditConfig.enabled ?? true,
       trackOldValues: this.auditConfig.trackOldValues ?? true,

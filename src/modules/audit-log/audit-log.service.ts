@@ -1,10 +1,11 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ClsService } from 'nestjs-cls';
 import {
   AuditAction,
   AuditLogEntity,
   AuditStatus,
+  AuditValues,
 } from 'src/database/entities/audit-log.entity';
 import { MyClsStore } from 'src/shared/interfaces/my-cls-store.interface';
 import { Repository } from 'typeorm';
@@ -109,11 +110,16 @@ export class AuditLogService {
     requestBody?: any;
     responseStatus?: number;
     responseTime?: number;
+    oldValues?: AuditValues;
+    newValues?: AuditValues;
+    changedFields?: string[];
     metadata?: any;
     error?: unknown;
   }): Promise<void> {
     try {
       const ctx = this.clsService.get('auditContext');
+
+      const performerUserId = params.userId ?? ctx?.user?.id;
 
       const errorMessage =
         params.error instanceof Error ? params.error.message : undefined;
@@ -125,8 +131,11 @@ export class AuditLogService {
         status: params.status ?? AuditStatus.SUCCESS,
         entityName: params.entityName ?? 'SYSTEM',
         entityId: params.entityId,
-        userId: params.userId ?? ctx?.user?.id,
-        createdById: params.userId ?? ctx?.user?.id,
+        userId: performerUserId,
+        createdById: performerUserId,
+        oldValues: params.oldValues,
+        newValues: params.newValues,
+        changedFields: params.changedFields,
         ipAddress: params.ipAddress ?? ctx?.ipAddress,
         userAgent: params.userAgent ?? ctx?.userAgent,
         endpoint: params.endpoint ?? ctx?.endpoint,

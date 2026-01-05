@@ -20,6 +20,9 @@ import { AuditableSubscriber } from './subscribers/auditable.subscriber';
       provide: 'AUDIT_CONFIG',
       useValue: {
         enabled: true,
+        // Chỉ log các hành động có người dùng thực hiện (có userId trong CLS context)
+        // Tránh log các update do MQTT/system background.
+        onlyUserActions: true,
         trackOldValues: true,
         trackNewValues: true,
         excludeFields: [],

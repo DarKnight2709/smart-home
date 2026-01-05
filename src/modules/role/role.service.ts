@@ -13,6 +13,8 @@ import { ILike, In, QueryFailedError, Repository } from 'typeorm';
 import { CreateRoleDto, GetRolesQueryDto, UpdateRoleDto } from './role.dto';
 import { SystemRole } from 'src/shared/enums/system-role';
 import { PermissionEntity } from 'src/database/entities/permission.entity';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import { AuditAction } from 'src/database/entities/audit-log.entity';
 
 @Injectable()
 export class RoleService {
@@ -22,7 +24,15 @@ export class RoleService {
     private readonly rolesRepository: Repository<RoleEntity>,
     @InjectRepository(PermissionEntity)
     private readonly permissionRepository: Repository<PermissionEntity>,
+    private readonly auditLogService: AuditLogService,
   ) {}
+
+  private toPermissionSummary(permissions: PermissionEntity[] | undefined) {
+    const safePermissions = permissions ?? [];
+    const ids = safePermissions.map((p) => p.id).filter(Boolean);
+    const names = safePermissions.map((p) => p.name).filter(Boolean);
+    return { ids, names };
+  }
 
   // Lấy danh sách vai trò
   async findAll(queryDto: GetRolesQueryDto) {
@@ -118,22 +128,84 @@ export class RoleService {
       if (role.isSystemRole) {
         throw new ForbiddenException('Bạn không có quyền sửa quyền này.');
       }
+
+      const beforePermissionEntities = role.permissions ?? [];
       Object.assign(role, {
         name: payload.name ?? role.name,
         description: payload.description ?? role.description,
       });
 
-      if (payload.permissionIds) {
-        const permissions = await this.permissionRepository.findBy({
-          id: In(payload.permissionIds),
-        })
-        
-        if(permissions.length !== payload.permissionIds.length) {
-          throw new BadRequestException("Có permission không tồn tại")
+      let permissionsChanged = false;
+      let nextPermissionEntities = beforePermissionEntities;
+      let addedPermissionIds: string[] = [];
+      let removedPermissionIds: string[] = [];
+
+      // permissionIds provided (including empty array to clear permissions)
+      if (payload.permissionIds !== undefined) {
+        const permissions = payload.permissionIds.length
+          ? await this.permissionRepository.findBy({ id: In(payload.permissionIds) })
+          : [];
+
+        if (permissions.length !== payload.permissionIds.length) {
+          throw new BadRequestException('Có permission không tồn tại');
         }
-        role.permissions = permissions;
+
+        nextPermissionEntities = permissions;
+
+        const beforeSummary = this.toPermissionSummary(beforePermissionEntities);
+        const nextSummary = this.toPermissionSummary(nextPermissionEntities);
+
+        const beforeSet = new Set(beforeSummary.ids);
+        const nextSet = new Set(nextSummary.ids);
+        addedPermissionIds = nextSummary.ids.filter((pid) => !beforeSet.has(pid));
+        removedPermissionIds = beforeSummary.ids.filter((pid) => !nextSet.has(pid));
+        permissionsChanged = addedPermissionIds.length > 0 || removedPermissionIds.length > 0;
+
+        role.permissions = nextPermissionEntities;
       }
-      return await this.rolesRepository.save(role);
+
+      const savedRole = await this.rolesRepository.save(role);
+
+      if (payload.permissionIds !== undefined && permissionsChanged) {
+        const beforeSummary = this.toPermissionSummary(beforePermissionEntities);
+        const nextSummary = this.toPermissionSummary(nextPermissionEntities);
+
+        const addedPermissionNames = nextPermissionEntities
+          .filter((p) => addedPermissionIds.includes(p.id))
+          .map((p) => p.name)
+          .filter(Boolean);
+        const removedPermissionNames = beforePermissionEntities
+          .filter((p) => removedPermissionIds.includes(p.id))
+          .map((p) => p.name)
+          .filter(Boolean);
+
+        const parts: string[] = [];
+        if (addedPermissionNames.length) parts.push(`Thêm: ${addedPermissionNames.join(', ')}`);
+        if (removedPermissionNames.length) parts.push(`Gỡ: ${removedPermissionNames.join(', ')}`);
+
+        await this.auditLogService.logCustom({
+          action: AuditAction.PERMISSION_CHANGE,
+          entityName: 'Role',
+          entityId: savedRole.id,
+          changedFields: ['permissions'],
+          oldValues: { permissions: beforeSummary.names },
+          newValues: { permissions: nextSummary.names },
+          description:
+            parts.length > 0
+              ? `Cập nhật quyền vai trò "${savedRole.name}": ${parts.join(' | ')}`
+              : `Cập nhật quyền vai trò "${savedRole.name}"`,
+          metadata: {
+            permissionChange: {
+              addedPermissionIds,
+              removedPermissionIds,
+              beforePermissionIds: beforeSummary.ids,
+              afterPermissionIds: nextSummary.ids,
+            },
+          },
+        });
+      }
+
+      return savedRole;
     } catch (error) {
       console.log(error);
       throw error;

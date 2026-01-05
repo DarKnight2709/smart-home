@@ -5,6 +5,8 @@ import { UserEntity } from 'src/database/entities/user.entity';
 import { In, QueryFailedError, Repository } from 'typeorm';
 import { CreateUserDto, UpdateUserDto } from './user.dto';
 import { RoleEntity } from 'src/database/entities/role.entity';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import { AuditAction } from 'src/database/entities/audit-log.entity';
 
 @Injectable()
 export class UserService {
@@ -15,8 +17,16 @@ export class UserService {
     @InjectRepository(RoleEntity)
     private readonly rolesRepository: Repository<RoleEntity>,
 
-    private readonly hashingService: HashingService
+    private readonly hashingService: HashingService,
+    private readonly auditLogService: AuditLogService,
   ) {}
+
+  private toRoleSummary(roles: RoleEntity[] | undefined) {
+    const safeRoles = roles ?? [];
+    const ids = safeRoles.map((r) => r.id).filter(Boolean);
+    const names = safeRoles.map((r) => r.name).filter(Boolean);
+    return { ids, names };
+  }
 
   // get all users
   async findAll() {
@@ -128,6 +138,18 @@ export class UserService {
       ? await this.rolesRepository.findBy({ id: In(payload.roleIds) })
       : undefined;
 
+    const beforeRoleEntities = user.roles ?? [];
+    const nextRoleEntities = roles ?? beforeRoleEntities;
+
+    const beforeRoles = this.toRoleSummary(beforeRoleEntities);
+    const nextRoles = this.toRoleSummary(nextRoleEntities);
+
+    const beforeSet = new Set(beforeRoles.ids);
+    const nextSet = new Set(nextRoles.ids);
+    const addedRoleIds = nextRoles.ids.filter((rid) => !beforeSet.has(rid));
+    const removedRoleIds = beforeRoles.ids.filter((rid) => !nextSet.has(rid));
+    const rolesChanged = addedRoleIds.length > 0 || removedRoleIds.length > 0;
+
     // Hash password nếu có
     const hashedPassword = payload.password
       ? this.hashingService.hash(payload.password)
@@ -141,7 +163,49 @@ export class UserService {
     });
 
     try {
-      return await this.usersRepository.save(user);
+      const savedUser = await this.usersRepository.save(user);
+
+      if (rolesChanged) {
+        const addedRoleNames = nextRoleEntities
+          .filter((r) => addedRoleIds.includes(r.id))
+          .map((r) => r.name)
+          .filter(Boolean);
+        const removedRoleNames = beforeRoleEntities
+          .filter((r) => removedRoleIds.includes(r.id))
+          .map((r) => r.name)
+          .filter(Boolean);
+
+        const parts: string[] = [];
+        if (addedRoleNames?.length) {
+          parts.push(`Thêm: ${addedRoleNames.join(', ')}`);
+        }
+        if (removedRoleNames?.length) {
+          parts.push(`Gỡ: ${removedRoleNames.join(', ')}`);
+        }
+
+        await this.auditLogService.logCustom({
+          action: AuditAction.UPDATE,
+          entityName: 'User',
+          entityId: savedUser.id,
+          changedFields: ['roles'],
+          oldValues: { roles: beforeRoles.names },
+          newValues: { roles: nextRoles.names },
+          description:
+            parts.length > 0
+              ? `Cập nhật vai trò người dùng "${savedUser.username}": ${parts.join(' | ')}`
+              : `Cập nhật vai trò người dùng "${savedUser.username}"`,
+          metadata: {
+            roleChange: {
+              addedRoleIds,
+              removedRoleIds,
+              beforeRoleIds: beforeRoles.ids,
+              afterRoleIds: nextRoles.ids,
+            },
+          },
+        });
+      }
+
+      return savedUser;
     } catch (error) {
       if (error instanceof QueryFailedError) {
         throw new ConflictException('Username hoặc email đã tồn tại');

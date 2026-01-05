@@ -7,11 +7,13 @@ import { MqttModule } from '../mqtt/mqtt.module';
 import { DeviceModule } from '../device/device.module';
 import { RoomSensorSnapshotEntity } from 'src/database/entities/sensor-data.entity';
 import { Device } from 'src/database/entities/device.entity';
+import { AuditLogModule } from '../audit-log/audit-log.module';
 
 @Module({
   imports: [
     MqttModule,
     DeviceModule,
+    AuditLogModule,
     TypeOrmModule.forFeature([RoomSensorSnapshotEntity, Device]),
   ],
   controllers: [KitchenController],

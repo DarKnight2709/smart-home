@@ -11,6 +11,8 @@ import { KitchenService } from '../kitchen/kitchen.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { RoomSensorSnapshotEntity } from 'src/database/entities/sensor-data.entity';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import { AuditAction, AuditStatus } from 'src/database/entities/audit-log.entity';
 
 interface RoomControlResult {
   room: string;
@@ -27,6 +29,7 @@ export class OverviewService {
     private readonly livingRoomMqttService: LivingRoomService,
     private readonly bedroomMqttService: BedroomService,
     private readonly kitchenMqttService: KitchenService,
+    private readonly auditLogService: AuditLogService,
     @InjectRepository(RoomSensorSnapshotEntity)
     private readonly roomSensorSnapshotRepo: Repository<RoomSensorSnapshotEntity>,
   ) {}
@@ -89,12 +92,44 @@ export class OverviewService {
     const failedRooms = results.filter((r) => !r.success);
 
     if (successCount === 0) {
+      await this.auditLogService.logCustom({
+        action: AuditAction.CUSTOM,
+        status: AuditStatus.FAILED,
+        entityName: 'Device',
+        entityId: 'ALL_LIGHTS',
+        description: `${state ? 'Bật' : 'Tắt'} tất cả đèn thất bại (tổng quan)`,
+        metadata: {
+          scope: 'overview',
+          operation: 'controlAllLights',
+          desiredState: state,
+          results,
+        },
+      });
       // Tất cả đều thất bại
       throw new BadRequestException({
         message: 'Không thể điều khiển đèn ở bất kỳ phòng nào. Tất cả thiết bị đang offline.',
         results,
       });
     }
+
+    await this.auditLogService.logCustom({
+      action: AuditAction.CUSTOM,
+      status: failedRooms.length > 0 ? AuditStatus.PARTIAL : AuditStatus.SUCCESS,
+      entityName: 'Device',
+      entityId: 'ALL_LIGHTS',
+      description:
+        failedRooms.length > 0
+          ? `${state ? 'Bật' : 'Tắt'} tất cả đèn một phần: Thành công ${successCount}/${rooms.length} phòng`
+          : `${state ? 'Bật' : 'Tắt'} tất cả đèn thành công`,
+      metadata: {
+        scope: 'overview',
+        operation: 'controlAllLights',
+        desiredState: state,
+        successCount,
+        totalRooms: rooms.length,
+        results,
+      },
+    });
 
     // Một số phòng thành công, một số thất bại
     return {
@@ -114,10 +149,8 @@ export class OverviewService {
     const rooms = [
       { name: 'living-room', displayName: 'Phòng khách', service: this.livingRoomMqttService },
       { name: 'bedroom', displayName: 'Phòng ngủ', service: this.bedroomMqttService },
-      // { name: 'kitchen', displayName: 'Nhà bếp', service: this.kitchenMqttService },
     ];
 
-    // Kiểm tra trạng thái tất cả các phòng
     for (const room of rooms) {
       try {
         await room.service.controlAllDoors(state);
@@ -135,19 +168,50 @@ export class OverviewService {
       }
     }
 
-    // Kiểm tra xem có phòng nào thành công không
     const successCount = results.filter((r) => r.success).length;
     const failedRooms = results.filter((r) => !r.success);
 
     if (successCount === 0) {
-      // Tất cả đều thất bại
+      await this.auditLogService.logCustom({
+        action: AuditAction.CUSTOM,
+        status: AuditStatus.FAILED,
+        entityName: 'Device',
+        entityId: 'ALL_DOORS',
+        description: `${state ? 'Mở' : 'Đóng'} tất cả cửa thất bại (tổng quan)`,
+        metadata: {
+          scope: 'overview',
+          operation: 'controlAllDoors',
+          deviceType: DeviceType.DOOR,
+          desiredState: state,
+          results,
+        },
+      });
       throw new BadRequestException({
         message: 'Không thể điều khiển cửa ở bất kỳ phòng nào. Tất cả thiết bị đang offline.',
         results,
       });
     }
 
-    // Một số phòng thành công, một số thất bại
+    await this.auditLogService.logCustom({
+      action: AuditAction.CUSTOM,
+      status: failedRooms.length > 0 ? AuditStatus.PARTIAL : AuditStatus.SUCCESS,
+      entityName: 'Device',
+      entityId: 'ALL_DOORS',
+      description:
+        failedRooms.length > 0
+          ? `${state ? 'Mở' : 'Đóng'} tất cả cửa một phần (tổng quan): ${state ? 'Mở' : 'Đóng'} cửa (${successCount}/${rooms.length} phòng thành công)`
+          : `${state ? 'Mở' : 'Đóng'} tất cả cửa thành công (tổng quan)`,
+      metadata: {
+        scope: 'overview',
+        operation: 'controlAllDoors',
+        deviceType: DeviceType.DOOR,
+        desiredState: state,
+        successCount,
+        totalRooms: rooms.length,
+        results,
+      },
+    });
+
     return {
       success: true,
       message: `Đã ${state ? 'mở' : 'đóng'} cửa thành công ${successCount}/${rooms.length} phòng`,
@@ -166,7 +230,6 @@ export class OverviewService {
       { name: 'kitchen', displayName: 'Nhà bếp', service: this.kitchenMqttService },
     ];
 
-    // Kiểm tra trạng thái tất cả các phòng
     for (const room of rooms) {
       try {
         await room.service.controlAllWindows(state);
@@ -184,19 +247,50 @@ export class OverviewService {
       }
     }
 
-    // Kiểm tra xem có phòng nào thành công không
     const successCount = results.filter((r) => r.success).length;
     const failedRooms = results.filter((r) => !r.success);
 
     if (successCount === 0) {
-      // Tất cả đều thất bại
+      await this.auditLogService.logCustom({
+        action: AuditAction.CUSTOM,
+        status: AuditStatus.FAILED,
+        entityName: 'Device',
+        entityId: 'ALL_WINDOWS',
+        description: `${state ? 'Mở' : 'Đóng'} tất cả cửa sổ thất bại (tổng quan)`,
+        metadata: {
+          scope: 'overview',
+          operation: 'controlAllWindows',
+          deviceType: DeviceType.WINDOW,
+          desiredState: state,
+          results,
+        },
+      });
       throw new BadRequestException({
         message: 'Không thể điều khiển cửa sổ ở bất kỳ phòng nào. Tất cả thiết bị đang offline.',
         results,
       });
     }
 
-    // Một số phòng thành công, một số thất bại
+    await this.auditLogService.logCustom({
+      action: AuditAction.CUSTOM,
+      status: failedRooms.length > 0 ? AuditStatus.PARTIAL : AuditStatus.SUCCESS,
+      entityName: 'Device',
+      entityId: 'ALL_WINDOWS',
+      description:
+        failedRooms.length > 0
+          ? `${state ? 'Mở' : 'Đóng'} tất cả cửa sổ một phần (tổng quan): ${state ? 'Mở' : 'Đóng'} cửa sổ (${successCount}/${rooms.length} phòng thành công)`
+          : `${state ? 'Mở' : 'Đóng'} tất cả cửa sổ thành công (tổng quan)`,
+      metadata: {
+        scope: 'overview',
+        operation: 'controlAllWindows',
+        deviceType: DeviceType.WINDOW,
+        desiredState: state,
+        successCount,
+        totalRooms: rooms.length,
+        results,
+      },
+    });
+
     return {
       success: true,
       message: `Đã ${state ? 'mở' : 'đóng'} cửa sổ thành công ${successCount}/${rooms.length} phòng`,
@@ -209,23 +303,4 @@ export class OverviewService {
     };
   }
 
-
-
-  // Optionally: điều khiển thiết bị từ overview
-  // async controlDevice(deviceId: string, command: string) {
-  //   const device = await this.deviceService.findById(deviceId);
-  //   if (!device) throw new Error('Device not found');
-
-  //   const room = device.location;
-  //   const type = device.type;
-
-  //   if (type === 'light') {
-  //     await this.mqttService.controlLight(room, command === 'ON');
-  //   } else if (type === 'door') {
-  //     await this.mqttService.controlDoor(room, command === 'UNLOCK');
-  //   }
-
-  //   // update lastState
-  //   await this.deviceService.updateStatus(deviceId, command);
-  // }
 }

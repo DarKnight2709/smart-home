@@ -9,9 +9,11 @@ import { BedroomModule } from '../bedroom/bedroom.module';
 import { KitchenModule } from '../kitchen/kitchen.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { RoomSensorSnapshotEntity } from 'src/database/entities/sensor-data.entity';
+import { AuditLogModule } from '../audit-log/audit-log.module';
 
 @Module({
   imports: [DeviceModule, LivingRoomModule, BedroomModule, KitchenModule,
+    AuditLogModule,
     TypeOrmModule.forFeature([RoomSensorSnapshotEntity]),
   ],
   providers: [OverviewService],

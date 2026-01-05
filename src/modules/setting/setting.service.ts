@@ -107,10 +107,11 @@ export class SettingService {
     });
 
     if (existed) {
-      await this.settingRepository.update(
-        { sensorType },
-        { minValue, maxValue },
-      );
+      // Use entity + save instead of repository.update() so TypeORM has a real entity instance
+      // and can provide proper databaseEntity snapshots for accurate audit diffing.
+      existed.minValue = minValue;
+      existed.maxValue = maxValue;
+      await this.settingRepository.save(existed);
     } else {
       await this.settingRepository.save(
         this.settingRepository.create({
