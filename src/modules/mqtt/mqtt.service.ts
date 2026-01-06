@@ -594,23 +594,23 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
               '/notifications',
             );
 
-          if (this.emailService && usersWithPermission.length > 0) {
-            const emailAddresses = usersWithPermission
-              .map((user: any) => user.email)
-              .filter((email: string) => email);
+          // if (this.emailService && usersWithPermission.length > 0) {
+          //   const emailAddresses = usersWithPermission
+          //     .map((user: any) => user.email)
+          //     .filter((email: string) => email);
 
-            if (emailAddresses.length > 0) {
-              const ok = await this.emailService.sendSensorWarning(
-                emailAddresses,
-                notification.title,
-                notification.message,
-                notification.metadata,
-              );
-              if (ok) {
-                await this.notificationService.markEmailSent(notification.id);
-              }
-            }
-          }
+          //   if (emailAddresses.length > 0) {
+          //     const ok = await this.emailService.sendSensorWarning(
+          //       emailAddresses,
+          //       notification.title,
+          //       notification.message,
+          //       notification.metadata,
+          //     );
+          //     if (ok) {
+          //       await this.notificationService.markEmailSent(notification.id);
+          //     }
+          //   }
+          // }
 
           this.lastSensorWarningKeyByRoom.set(room, warningKey);
         } catch (error) {
